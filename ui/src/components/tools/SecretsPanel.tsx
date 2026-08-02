@@ -59,9 +59,9 @@ export function SecretsPanel() {
     <GlowCard hover={false} variants={fadeUp} data-testid="secrets-panel">
       <h2>Secrets</h2>
       <p className="muted">
-        The local secret store. A secret&apos;s <strong>value is write-only</strong> —
-        it is never shown again after you store it (D81); this panel lists only NAMES and audit
-        timestamps. Reference a secret by its NAME from a Connection or a Trigger&apos;s auth.
+        The local secret store. A secret&apos;s <strong>value is write-only</strong> — it is never
+        shown again after you store it (D81); this panel lists only NAMES and audit timestamps.
+        Reference a secret by its NAME from a Connection or a Trigger&apos;s auth.
       </p>
 
       {list.notWired ? (
