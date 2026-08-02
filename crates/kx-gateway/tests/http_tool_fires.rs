@@ -41,7 +41,6 @@ mod common;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use kx_gateway::start;
 use kx_proto::proto;
@@ -51,14 +50,7 @@ use tonic::transport::Channel;
 const SERVER: &str = "fleet";
 
 async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
-    let endpoint = format!("http://{addr}");
-    for _ in 0..50 {
-        if let Ok(c) = KxGatewayClient::connect(endpoint.clone()).await {
-            return c;
-        }
-        tokio::time::sleep(Duration::from_millis(40)).await;
-    }
-    panic!("client connects to the gateway at {endpoint}");
+    common::connect_client(addr).await
 }
 
 /// Read `next_cursor` out of a tool result without interpreting the rest of it — the

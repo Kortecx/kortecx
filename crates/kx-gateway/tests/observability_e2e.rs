@@ -35,21 +35,20 @@ fn obs_config(dir: &TempDir, audit_path: PathBuf) -> GatewayConfig {
     cfg
 }
 
+/// The gateway's own two-gate connect (TCP accept, then the H2 handshake). The local
+/// one-second connect loop this replaces is the known CI flake — the helper's own doc
+/// records it, and it was still copied into every file in this directory.
 async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
-    let endpoint = format!("http://{addr}");
-    for _ in 0..100 {
-        if let Ok(c) = KxGatewayClient::connect(endpoint.clone()).await {
-            return c;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("client connects to the gateway at {endpoint}");
+    common::connect_client(addr).await
 }
 
 /// One raw HTTP/1.1 GET (status line, lowercased headers, body) — no new dev-deps
 /// (mirrors `console_e2e::raw_http`); proves the endpoint answers plain HTTP, which
 /// is exactly what a Prometheus scraper sends.
 async fn raw_get(addr: SocketAddr, method: &str, path: &str) -> (String, String, String) {
+    // The METRICS listener is a different socket from the gRPC one, so the client gate
+    // above says nothing about it; a bare connect here has zero tolerance for a late bind.
+    common::await_listening(addr).await;
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let req = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).await.unwrap();

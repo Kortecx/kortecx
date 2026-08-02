@@ -27,6 +27,9 @@ async fn gateway_reports_serving_on_grpc_health_unauthenticated() {
 
     // Connect a bare health client (no bearer token), retrying while the serve task
     // finishes binding.
+    // Gate 1 first: the flake this loop used to carry was the missing TCP wait, not the
+    // client type (see `common::await_listening`).
+    common::await_listening(running.local_addr()).await;
     let mut client = {
         let mut found = None;
         for _ in 0..100 {

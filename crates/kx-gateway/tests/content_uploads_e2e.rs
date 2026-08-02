@@ -39,17 +39,11 @@ fn config(dir: &TempDir, dev_allow_local: bool) -> GatewayConfig {
 }
 
 async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
-    let endpoint = format!("http://{addr}");
-    for _ in 0..100 {
-        if let Ok(c) = KxGatewayClient::connect(endpoint.clone()).await {
-            // Mirror the server's raised decode limit on the CLIENT side too
-            // (the batch response can reach ~32 MiB; tonic clients also default
-            // to 4 MiB).
-            return c.max_decoding_message_size(64 * 1024 * 1024);
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("client connects to the gateway at {endpoint}");
+    // The gateway's own two-gate connect, then mirror the server's raised decode limit on
+    // the CLIENT side (the batch response can reach ~32 MiB; tonic clients default to 4).
+    common::connect_client(addr)
+        .await
+        .max_decoding_message_size(64 * 1024 * 1024)
 }
 
 fn put_req(payload: Vec<u8>) -> proto::PutContentRequest {

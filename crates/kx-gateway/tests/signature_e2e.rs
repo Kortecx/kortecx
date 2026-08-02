@@ -17,7 +17,6 @@ mod common;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use kx_catalog::{canonical_config, RecipeSnapshot, SignatureEntry, TaskSignature};
 use kx_gateway::start;
@@ -26,15 +25,11 @@ use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tonic::transport::Channel;
 use tonic::Request;
 
+/// The gateway's own two-gate connect (TCP accept, then the H2 handshake). The local
+/// one-second connect loop this replaces is the known CI flake — the helper's own doc
+/// records it, and it was still copied into every file in this directory.
 async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
-    let endpoint = format!("http://{addr}");
-    for _ in 0..100 {
-        if let Ok(c) = KxGatewayClient::connect(endpoint.clone()).await {
-            return c;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("client connects to the gateway at {endpoint}");
+    common::connect_client(addr).await
 }
 
 /// A manifest = the canonical-encoded `SignatureEntry` for `fp` (a distinct
