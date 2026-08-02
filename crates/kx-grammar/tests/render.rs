@@ -334,3 +334,64 @@ fn gbnf_ignores_answer_only() {
         "answer_only must not change the llama.cpp GBNF (llama.cpp already completes the loop)"
     );
 }
+
+/// **Characterising the typed-args path BEFORE it goes live on every dispatch.**
+///
+/// This path is implemented and had exactly one test, and `ToolSpec::with_schema` has no
+/// production caller — `build_tool_grammar` builds every live spec with `ToolSpec::new`.
+/// "Built, tested once, never invoked" is indistinguishable from "working" in a test suite,
+/// so the shapes a real registry actually produces are pinned here first.
+///
+/// The load-bearing case is ALL-OPTIONAL, because it is what a paginated tool declares:
+/// `fleet/page` has one optional `cursor`, and the roster call that failed live was a
+/// malformed args object for exactly that schema.
+#[test]
+fn an_all_optional_schema_can_express_every_subset_the_validator_accepts() {
+    let schema = InputSchema {
+        params: vec![
+            ParamSpec {
+                name: "a".into(),
+                ty: ParamType::Bool,
+                required: false,
+            },
+            ParamSpec {
+                name: "b".into(),
+                ty: ParamType::Bool,
+                required: false,
+            },
+        ],
+        deny_unknown: true,
+    };
+    let gbnf =
+        ToolEnvelopeSpec::new(vec![ToolSpec::with_schema("t", "1", schema.clone())]).to_gbnf();
+
+    // `validate_args` accepts {} , {"a":…} , {"b":…} and {"a":…,"b":…} — every subset, in any
+    // order, because it parses a MAP. A grammar that cannot express one of those is STRICTER
+    // than the validator it is supposed to front, and the model loses a legal call.
+    for args in [
+        r#"{}"#,
+        r#"{"a":true}"#,
+        r#"{"b":true}"#,
+        r#"{"a":true,"b":true}"#,
+    ] {
+        assert!(
+            kx_tool_registry::validate_args(&schema, args.as_bytes()).is_ok(),
+            "the validator accepts {args}"
+        );
+    }
+    // The grammar must therefore offer `b` WITHOUT `a`. Rendered as
+    // `( a ( "," b )? )?` it cannot: dropping `a` drops `b` with it.
+    let args_rule = gbnf
+        .lines()
+        .find(|l| l.starts_with("args0 ::="))
+        .unwrap_or_default()
+        .to_string();
+    // Each optional must be reachable as the FIRST member, or the grammar is narrower than
+    // the validator: rendered as `( a ( "," b )? )?` the language is {} | {a} | {a,b}, and a
+    // model that wants only `b` is forced to also send `a`.
+    assert!(
+        args_rule.contains(r#""\"b\"" ws ":" ws ( "true" | "false" ) )? ws "}""#)
+            || args_rule.split(r#""\"b\"""#).count() >= 3,
+        "every optional must be reachable as the first member: {args_rule}"
+    );
+}
