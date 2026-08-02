@@ -329,10 +329,17 @@ pub(crate) fn list_react_turns(
                     .collect::<Vec<_>>()
             }
             // Not a row of its own: remember where each Mote's committed output lives so
-            // a refused turn can show the bytes it was settled from. Cheap (a ref, not a
-            // blob) and unconditional — the ReactRound settle may be appended either side
-            // of its turn's Committed fact, so filtering to turn Motes here would depend
-            // on append order.
+            // a refused turn can show the bytes it was settled from. A ref, never a blob —
+            // the blobs are read after paging, for refusals only.
+            //
+            // Unconditional because a `ReactRound` settle may be appended either side of
+            // its turn's `Committed` fact, so filtering to turn Motes here would depend on
+            // append order. The stated cost: this is one 32-byte key + ref per COMMITTED
+            // Mote in the journal, and committed Motes are not budget-bounded the way
+            // turns are. It rides an O(journal) fold that already materialises every
+            // ReactRound row, and a second walk to fetch these refs would double the cost
+            // of every list call — but on a long-lived serve journal this map, not the
+            // page, is what grows.
             JournalEntry::Committed {
                 mote_id,
                 result_ref,
