@@ -104,13 +104,32 @@ fn render_typed_args(idx: usize, params: &[ParamSpec]) -> String {
     } else if optional.is_empty() {
         String::new()
     } else {
-        // All-optional: the first opens the group, the rest are nested optionals.
-        let mut s = format!("( {}", member_fragment(optional[0]));
-        for p in &optional[1..] {
-            let _ = write!(s, " ( ws \",\" ws {} )?", member_fragment(p));
-        }
-        s.push_str(" )?");
-        s
+        // ALL-OPTIONAL, and the shape matters: `validate_args` parses a MAP, so it accepts
+        // EVERY subset of the declared optionals. A grammar that is narrower than the
+        // validator it fronts silently costs the model a legal call.
+        //
+        // The obvious rendering — `( o1 ( "," o2 )? … )?` — hoists `o1` into a mandatory
+        // opener, so the language is `{}` | `{o1}` | `{o1,o2}` and `{o2}` alone is
+        // UNREPRESENTABLE. Measured on a two-optional schema before this branch was ever
+        // reached in production.
+        //
+        // Instead: alternate over WHICH optional appears first, and let every later one stay
+        // independently skippable (the same chain the required branch above uses, which is
+        // already correct because a required member anchors it). Declared order is preserved
+        // within each alternative — that is the tool's identity contract and the validator
+        // does not care about key order. O(n²) in text for a parameter list, which is small.
+        let alts: Vec<String> = (0..optional.len())
+            .map(|first| {
+                let mut s = member_fragment(optional[first]);
+                for p in &optional[first + 1..] {
+                    let _ = write!(s, " ( ws \",\" ws {} )?", member_fragment(p));
+                }
+                s
+            })
+            .collect();
+        // The empty object is a legal call for an all-optional schema, so it is an explicit
+        // alternative rather than an outer `?` (which would reintroduce the hoist).
+        format!("( {} | \"\" )", alts.join(" | "))
     };
 
     if members.is_empty() {

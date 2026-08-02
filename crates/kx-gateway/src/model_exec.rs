@@ -142,14 +142,45 @@ pub(crate) fn shaper_warrant(model_id: &ModelId, exec_class: ExecutorClass) -> W
 /// [`Self::react_answer_force`] from the frozen instruction), FORCE the union's
 /// answer-only arm so a weak model settles instead of looping. Off-digest (a dispatch
 /// decode param, never the MoteDef).
-fn build_tool_grammar(warrant: &WarrantSpec, answer_force: bool) -> Option<Grammar> {
+fn build_tool_grammar(
+    warrant: &WarrantSpec,
+    answer_force: bool,
+    registry: Option<&dyn kx_tool_registry::ToolRegistry>,
+) -> Option<Grammar> {
     if warrant.tool_grants.is_empty() {
         return None;
     }
     let tools: Vec<ToolSpec> = warrant
         .tool_grants
         .iter()
-        .map(|g| ToolSpec::new(g.tool_id.0.clone(), g.tool_version.0.clone()))
+        .map(|g| {
+            let spec = ToolSpec::new(g.tool_id.0.clone(), g.tool_version.0.clone());
+            // Constrain the ARGS to the tool's declared parameters — but ONLY when the
+            // declaration is CLOSED. **The grammar may be no narrower than the validator.**
+            //
+            // `deny_unknown` is exactly that predicate, and it is not incidental:
+            // `json_schema_to_input_schema` DROPS every MCP property it cannot type (number,
+            // array, object, combinator) and sets `deny_unknown: false` to say so — the
+            // schema it returns is a PARTIAL gate, and the server validates the rest. Arming
+            // a closed grammar from a partial schema would make every dropped parameter
+            // unrepresentable, so a dialed MCP tool with a required object/array argument
+            // would become UNCALLABLE by construction. A bundled tool declares
+            // `deny_unknown: true` and is a complete description of what it accepts.
+            //
+            // So: closed schema ⇒ typed args; open or absent ⇒ the generic object, exactly as
+            // before. The accept-side `validate_args` gate is unchanged either way and
+            // remains the authority.
+            let Some(reg) = registry else { return spec };
+            let Some(def) = reg.lookup(&g.tool_id, &g.tool_version) else {
+                return spec;
+            };
+            match def.input_schema {
+                Some(schema) if schema.deny_unknown => {
+                    ToolSpec::with_schema(g.tool_id.0.clone(), g.tool_version.0.clone(), schema)
+                }
+                _ => spec,
+            }
+        })
         .collect();
     // RC4c-2c (T-OLLAMA-GRAMMAR-FORMAT): opt-in Ollama tool-REQUIRED `strict` mode
     // (`KX_SERVE_OLLAMA_TOOL_FORMAT`, default OFF). When off, `with_strict(false)` is
@@ -1592,7 +1623,11 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             // T-GEMMA3-TOOL-LOOP-ANSWER-FORCE: derive the answer-only signal from THIS
             // turn's frozen instruction (a duplicate re-prompt / settle-nudge) so a weak
             // model is forced to settle. Off-digest — armed on the params clone only.
-            if let Some(grammar) = build_tool_grammar(warrant, Self::react_answer_force(mote)) {
+            if let Some(grammar) = build_tool_grammar(
+                warrant,
+                Self::react_answer_force(mote),
+                self.tool_registry.as_deref(),
+            ) {
                 params.grammar = Some(grammar);
             }
         }
@@ -3749,6 +3784,62 @@ mod tests {
         )
         .expect("register echo def");
         Arc::new(reg)
+    }
+
+    /// **The grammar may be no narrower than the validator.**
+    ///
+    /// `json_schema_to_input_schema` DROPS every MCP property it cannot type (number,
+    /// array, object, combinator) and sets `deny_unknown: false` to declare the result a
+    /// PARTIAL gate. Arming a closed grammar from a partial schema would make every dropped
+    /// parameter unrepresentable — a dialed MCP tool with a required object argument would
+    /// become UNCALLABLE by construction, and nothing downstream would say why.
+    ///
+    /// So `deny_unknown` is the arming predicate, and this pins BOTH directions: a closed
+    /// (bundled) schema gets typed args, an open (MCP-derived) schema keeps the generic
+    /// object. Without the second arm the first is satisfiable by "always constrain".
+    #[test]
+    fn typed_args_arm_only_on_a_closed_schema() {
+        use kx_tool_registry::ToolRegistry as _;
+        let warrant = granted_warrant();
+
+        // (a) CLOSED — the bundled echo def declares `deny_unknown: true`.
+        let closed = menu_registry();
+        let g = build_tool_grammar(&warrant, false, Some(closed.as_ref()))
+            .expect("a granted warrant yields a grammar");
+        let raw_closed = g.raw.clone();
+        assert!(
+            raw_closed.contains("arg_schema"),
+            "a closed schema must constrain the args: {raw_closed}"
+        );
+
+        // (b) OPEN — the SAME tool, one variable changed: deny_unknown = false, the shape an
+        //     MCP-derived schema always has.
+        let mut open_reg = kx_tool_registry::InMemoryToolRegistry::new();
+        let mut def = crate::mcp_tool::echo_tool_def();
+        def.tool_id = kx_mote::ToolName("mcp-echo".into());
+        if let Some(schema) = def.input_schema.as_mut() {
+            schema.deny_unknown = false;
+        }
+        open_reg
+            .register(
+                def,
+                kx_tool_registry::ToolProvenance::HumanAuthored {
+                    author: "test".into(),
+                },
+            )
+            .expect("register");
+        let g = build_tool_grammar(&warrant, false, Some(&open_reg))
+            .expect("a granted warrant yields a grammar");
+        let raw_open = g.raw.clone();
+        assert!(
+            !raw_open.contains("arg_schema"),
+            "an OPEN schema must keep the generic object — its dropped params would be \
+             unrepresentable under a closed grammar: {raw_open}"
+        );
+
+        // (c) No registry wired at all ⇒ unchanged from before this feature existed.
+        let g = build_tool_grammar(&warrant, false, None).expect("grammar without a registry");
+        assert!(!g.raw.contains("arg_schema"));
     }
 
     /// The LEAD fix: a tool-eligible ReAct turn with grants + a wired registry
