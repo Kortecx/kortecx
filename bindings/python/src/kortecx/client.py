@@ -2641,7 +2641,7 @@ class KxClient:
 
     def put_secret(self, *, name: str, value: str) -> bool:
         """Store (create or overwrite) a named secret VALUE in the runtime's secret
-        store (``PutSecret``). The value is held server-side (keychain / vault) and
+        store (``PutSecret``). The value is held server-side and
         NEVER returned over the wire (D81); a connector ``credential_ref`` / a
         trigger ``auth_secret_ref`` later NAMES this row. Returns ``True`` iff the
         row was stored."""

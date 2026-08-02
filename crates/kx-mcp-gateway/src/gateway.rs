@@ -91,9 +91,9 @@ pub struct McpGateway {
     allowlist: Vec<String>,
     /// The resolver that turns an authorized `credential_ref` NAME into its secret
     /// value, transiently, at transport setup (D110.2). Defaults to the env-var
-    /// passthrough ([`EnvSecretStore`]); the host injects a keychain-backed
+    /// passthrough ([`EnvSecretStore`]); the host injects a store-backed
     /// [`kx_mcp::ChainedSecretStore`] (MM-3) so a connection credential resolves
-    /// from the OS keychain first, then the host environment (back-compat).
+    /// from the local secret store first, then the host environment (back-compat).
     secret_store: Arc<dyn SecretStore>,
 }
 
@@ -127,7 +127,7 @@ impl McpGateway {
     }
 
     /// Inject the resolver used to turn a connection's `credential_ref` NAME into
-    /// its secret value at transport setup. The host wires a keychain-backed
+    /// its secret value at transport setup. The host wires a store-backed
     /// [`kx_mcp::ChainedSecretStore`] here (MM-3); the default is the env-var
     /// passthrough, so existing env-var credentials keep resolving unchanged.
     #[must_use]
@@ -498,7 +498,7 @@ fn dial_error_of_session(e: &kx_mcp::SessionError) -> GatewayError {
 
 /// Build a `kx-mcp` transport from a connection's spec + optional credential.
 ///
-/// `secret_store` is the host-injected resolver (MM-3 keychain-then-env chain by
+/// `secret_store` is the host-injected resolver (the store-then-env chain by
 /// default the bare env passthrough) that the transport uses to turn the
 /// connection's `credential_ref` NAME into the secret value transiently at dispatch
 /// — the value is read inside the transport, injected into the child env / the

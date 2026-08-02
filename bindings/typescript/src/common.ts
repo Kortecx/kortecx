@@ -249,7 +249,7 @@ export type {
   ToolParam,
 } from "./toolscout.js";
 
-// MM-3 / D110: the local OS-keychain secret store (write-only value; names-only read).
+// The local secret store (write-only value; names-only read).
 // The ControlSurface + NL authoring surface.
 export type {
   ControlPreview,

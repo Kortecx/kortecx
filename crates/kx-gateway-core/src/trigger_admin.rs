@@ -16,7 +16,7 @@
 //! - **Idempotency.** A replayed event (same `idempotency_key`) is a no-op: it returns the
 //!   prior run and fires nothing (`deduped = true`).
 //! - **Secret-less.** The webhook auth secret is referenced by NAME only (resolved from
-//!   the keychain at verify time); the value never crosses this seam or the journal.
+//!   the local store at verify time); the value never crosses this seam or the journal.
 //! - **`None` seam ⇒ `unimplemented`.** The hosted multi-tenant trigger gateway is CLOUD.
 
 /// A `RegisterTrigger` request, in gateway-core vocabulary. `kind`/`auth` are validated

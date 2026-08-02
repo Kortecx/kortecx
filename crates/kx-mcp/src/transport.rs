@@ -264,8 +264,14 @@ impl McpTransport for StdioTransport {
         }
         // Out-of-band secret injection (D81): resolve through the SecretStore into
         // the child env; the secret never transits an EffectRequest / handle / journal.
+        // A NAMED credential that does not resolve refuses the spawn — see
+        // `CredentialRef::try_inject_into` for why the permissive form misleads.
         for credential in &self.credentials {
-            credential.inject_into(&*self.secret_store, &mut cmd);
+            if !credential.try_inject_into(&*self.secret_store, &mut cmd) {
+                return Err(TransportError::CredentialUnresolved {
+                    name: credential.identity().to_string(),
+                });
+            }
         }
 
         let mut child = cmd
@@ -348,7 +354,11 @@ impl McpTransport for StdioTransport {
             cmd.env(key, value);
         }
         for credential in &self.credentials {
-            credential.inject_into(&*self.secret_store, &mut cmd);
+            if !credential.try_inject_into(&*self.secret_store, &mut cmd) {
+                return Err(TransportError::CredentialUnresolved {
+                    name: credential.identity().to_string(),
+                });
+            }
         }
         let session = StdioSession::spawn(cmd)?;
         Ok(Box::new(session))

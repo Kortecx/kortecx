@@ -44,15 +44,24 @@ use tonic::transport::Channel;
 /// the H2 handshake. The old single 1 s connect-loop was the pre-existing CI
 /// tcp-connect flake (`capture_*` under load) — under a slow CI start the port was
 /// not yet accepting within 1 s and the loop panicked.
-pub async fn connect_client(addr: SocketAddr) -> KxGatewayClient<Channel> {
-    let endpoint = format!("http://{addr}");
-    // Gate 1: the listener is bound + accepting (TCP).
+/// Gate 1 on its own: wait (~5 s) for the listener to ACCEPT.
+///
+/// Extracted so the clients that cannot use [`connect_client`] — a `HealthClient`, a TLS
+/// endpoint — get the same wait instead of a bare connect loop. The flake is the missing
+/// TCP gate, not the client type.
+pub async fn await_listening(addr: SocketAddr) {
     for _ in 0..500 {
         if tokio::net::TcpStream::connect(addr).await.is_ok() {
-            break;
+            return;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+}
+
+pub async fn connect_client(addr: SocketAddr) -> KxGatewayClient<Channel> {
+    let endpoint = format!("http://{addr}");
+    // Gate 1: the listener is bound + accepting (TCP).
+    await_listening(addr).await;
     // Gate 2: the eager gRPC connect completes the H2 handshake.
     for _ in 0..50 {
         if let Ok(c) = KxGatewayClient::connect(endpoint.clone()).await {

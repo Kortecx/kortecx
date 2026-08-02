@@ -795,10 +795,10 @@ pub struct GatewayService {
     /// return `unimplemented`. The live untrusted-egress surface. OAuth/
     /// device-flow + a credential marketplace are CLOUD.
     mcp_admin: Option<Arc<dyn crate::mcp_gateway_admin::McpGatewayAdmin>>,
-    /// The optional LOCAL secret-store admin seam (MM-3 — the host injects a
-    /// keychain-backed impl). `None` ⇒ `PutSecret`/`ListSecretNames`/`DeleteSecret`
-    /// return `unimplemented`. Off-journal (OS keychain + an off-digest NAME index);
-    /// the secret VALUE never crosses any return type, the wire, or the journal (D81).
+    /// The optional LOCAL secret-store admin seam (the host injects a file-backed
+    /// impl). `None` ⇒ `PutSecret`/`ListSecretNames`/`DeleteSecret` return
+    /// `unimplemented`. Off-journal and off-digest; the secret VALUE never crosses any
+    /// return type, the wire, or the journal (D81).
     secret_admin: Option<Arc<dyn crate::secret_admin::SecretAdmin>>,
     /// Whether secret WRITES (`PutSecret`/`DeleteSecret`) are permitted — set true by
     /// the host ONLY when the gateway is bound to a loopback address (the local-first
@@ -2299,11 +2299,11 @@ fn trigger_auth_proto(auth: &str) -> i32 {
     }
 }
 
-/// MM-3 secret-name validation. A secret NAME is referenced as a connection's
-/// `credential_ref` AND used as an OS-keychain entry key AND as the chained-env
-/// fallback var name, so it must be a portable identifier: non-empty, ≤255 bytes,
-/// and `[A-Za-z0-9_.-]` only (env-var-name-ish + dots/dashes). Rejecting anything
-/// else keeps the keychain key + the env fallback unambiguous and log-safe.
+/// Secret-name validation. A secret NAME is referenced as a connection's
+/// `credential_ref` AND used as the store's key AND as the chained-env fallback var
+/// name, so it must be a portable identifier: non-empty, ≤255 bytes, and
+/// `[A-Za-z0-9_.-]` only (env-var-name-ish + dots/dashes). Rejecting anything else
+/// keeps the store key + the env fallback unambiguous and log-safe.
 fn valid_secret_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 255
@@ -4866,8 +4866,8 @@ impl KxGateway for GatewayService {
         }
     }
 
-    // ── MM-3 (D110): the LOCAL OS-keychain secret store. The VALUE is write-only
-    // (PutSecret arg); it is never returned, listed, journaled, or in model context.
+    // ── The LOCAL secret store. The VALUE is write-only (PutSecret arg); it is never
+    // returned, listed, journaled, or in model context.
     async fn put_secret(
         &self,
         request: Request<proto::PutSecretRequest>,

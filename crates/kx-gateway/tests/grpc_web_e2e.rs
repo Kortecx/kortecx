@@ -66,19 +66,10 @@ fn cfg_with_cors(dir: &TempDir, cors_origins: Vec<String>) -> GatewayConfig {
 async fn http1_request(addr: SocketAddr, request: &[u8]) -> Vec<u8> {
     // `start()` returns before the listener binds (the serve task spawns), so retry
     // the connect briefly — mirrors `common::connect_client`.
-    let mut stream = {
-        let mut last = None;
-        for _ in 0..200 {
-            match TcpStream::connect(addr).await {
-                Ok(s) => {
-                    last = Some(s);
-                    break;
-                }
-                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
-            }
-        }
-        last.expect("connect to gateway (server bound)")
-    };
+    common::await_listening(addr).await;
+    let mut stream = TcpStream::connect(addr)
+        .await
+        .expect("connect to gateway (server bound)");
     stream.write_all(request).await.expect("write request");
     stream.flush().await.expect("flush");
 

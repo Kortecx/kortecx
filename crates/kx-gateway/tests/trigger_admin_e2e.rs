@@ -1,15 +1,17 @@
 //! D113 trigger-seam RPC e2e: drives `RegisterTrigger` / `ListTriggers` /
 //! `DeregisterTrigger` / `SubmitTrigger` / `TestTrigger` through the REAL gateway
 //! service (the handlers + the host `TriggerAdmin` seam + the off-journal triggers.db),
-//! deterministically (no model). The actual event→run FIRE (trigger → real Gemma run)
-//! is covered by the live dual-engine validation; here we prove the admin RPC wiring,
-//! the governance view (secret referenced by NAME only), idempotent re-register, and
-//! the not-found / dry-run paths.
+//! deterministically (no model). Here we prove the admin RPC wiring, the governance view
+//! (secret referenced by NAME only), idempotent re-register, and the not-found paths.
+//!
+//! It does NOT exercise `TestTrigger` or a fire, despite an earlier version of this
+//! comment claiming the dry-run paths: no test in this file calls either. Both live in
+//! `trigger_fire_e2e.rs`, which counts the work a fire admits rather than trusting the
+//! response.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use kx_gateway::{start, GatewayConfig};
 use kx_proto::proto;
@@ -23,15 +25,11 @@ fn config(dir: &TempDir) -> GatewayConfig {
     common::gateway_config(dir, true, HashMap::new())
 }
 
+/// The gateway's own two-gate connect (TCP accept, then the H2 handshake). The local
+/// one-second connect loop this replaces is the known CI flake — the helper's own doc
+/// records it, and it was still copied into every file in this directory.
 async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
-    let endpoint = format!("http://{addr}");
-    for _ in 0..100 {
-        if let Ok(c) = KxGatewayClient::connect(endpoint.clone()).await {
-            return c;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("client connects to the gateway at {endpoint}");
+    common::connect_client(addr).await
 }
 
 #[tokio::test]

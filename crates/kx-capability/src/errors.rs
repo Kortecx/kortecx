@@ -25,6 +25,12 @@ pub enum CapabilityFailureReason {
     Timeout,
     /// The response was malformed or did not match the expected shape.
     InvalidResponse,
+    /// A credential this dispatch NAMES did not resolve on this host — the local secret
+    /// store has no such name and neither does the environment. Carries the name so the
+    /// operator is pointed at their own store rather than at the remote system's
+    /// settings. Distinct from [`Self::AuthDenied`], which means the far end evaluated a
+    /// credential and rejected it; here nothing was ever sent.
+    CredentialUnresolved(String),
     /// Other capability-defined reason; opaque string for diagnostics.
     Other(String),
 }
@@ -156,6 +162,10 @@ impl BrokerError {
                 CapabilityFailureReason::InvalidResponse => {
                     "the external system's response did not match the expected shape".to_string()
                 }
+                CapabilityFailureReason::CredentialUnresolved(name) => format!(
+                    "the credential {name:?} this call needs is not stored on this host, so \
+                     no request was sent; an operator must store it"
+                ),
             },
             // Runtime-side refusals. The model is told THAT the call did not complete
             // (via the class-derived steer) and not how this machine is configured.
@@ -219,6 +229,10 @@ impl BrokerError {
                 // The external system evaluated the credential and said no. The same
                 // credential produces the same answer; only an operator changes it.
                 CapabilityFailureReason::AuthDenied => true,
+                // A credential that is absent from this host is absent on the next
+                // attempt too. Only an operator storing it changes the answer, so a retry
+                // re-asks a settled question — and each one is another outbound call.
+                CapabilityFailureReason::CredentialUnresolved(_) => true,
                 // Genuinely retryable: a limit that lifts, a network that returns, a call
                 // that may fit next time. `InvalidResponse` is included deliberately — a
                 // server that garbles one response may serve the next, and treating a
@@ -370,6 +384,12 @@ mod tests {
             BrokerError::CapabilityFailure {
                 capability: cap(),
                 reason: CapabilityFailureReason::AuthDenied,
+            },
+            // A credential absent from this host is absent on the retry too, and each
+            // retry is another outbound call carrying no credential.
+            BrokerError::CapabilityFailure {
+                capability: cap(),
+                reason: CapabilityFailureReason::CredentialUnresolved("TOKEN".to_string()),
             },
         ];
         for e in &permanent {

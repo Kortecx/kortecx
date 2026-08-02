@@ -1,5 +1,5 @@
 /**
- * The local OS-keychain secret store views (MM-3 / D110). A `SecretRef` NAME is
+ * The local secret store views. A `SecretRef` NAME is
  * what a connection's / trigger's `credential_ref` points at; the secret VALUE is
  * write-only — it appears ONLY as a `PutSecret` argument and is never returned on
  * any read. `ListSecretNames` surfaces NAMES + audit timestamps only. Kept in its

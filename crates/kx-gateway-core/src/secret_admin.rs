@@ -1,20 +1,20 @@
 //! The LOCAL secret-store admin seam (MM-3, D110 — `PutSecret` / `ListSecretNames`
 //! / `DeleteSecret`).
 //!
-//! Spoken entirely in gateway-core's OWN vocabulary (`String` / `u64` / `bool`) —
-//! no host type (no `keyring::Entry`) crosses the seam, the
+//! Spoken entirely in gateway-core's OWN vocabulary (`String` / `u64` / `bool`) — no
+//! host storage type crosses the seam, the
 //! [`crate::mcp_gateway_admin::McpGatewayAdmin`] pattern. The host (`kx-gateway`)
-//! implements it over the OS keychain + an off-journal `secret_index.db` NAME index.
+//! implements it over one operator-visible file under its catalog dir.
 //!
 //! # Boundaries
 //!
 //! - **Write-only value.** The secret VALUE is supplied ONLY to [`SecretAdmin::put`]
-//!   (where the impl stores it in the OS keychain and drops it). It NEVER appears on
+//!   (where the impl writes it to the local store and drops it). It NEVER appears on
 //!   any return type, the wire, the journal, a `MoteId`, or the model's context.
 //! - **NAMES only.** [`SecretAdmin::list_names`] returns NAMES + timestamps — the
 //!   governance view — never a value.
 //! - **Resolve is elsewhere.** This seam is the write/enumerate admin; resolution is
-//!   the `kx-mcp` `SecretStore` (the keychain arm of the host `ChainedSecretStore`),
+//!   the `kx-mcp` `SecretStore` (the store arm of the host `ChainedSecretStore`),
 //!   gated by the broker `secret_scope` precheck (the sole authorization gate).
 //! - **`None` seam ⇒ `unimplemented`.** A gateway without a secret store wired
 //!   degrades forward-compatibly. The hardened KMS/HSM vault is CLOUD (D94).
@@ -37,27 +37,28 @@ pub enum SecretAdminError {
     /// A malformed name (empty / too long / illegal chars). Maps to `invalid_argument`.
     #[error("invalid secret name: {0}")]
     InvalidArgument(String),
-    /// No OS keychain backend is available on this host (e.g. a headless box with no
-    /// keyutils). Maps to `failed_precondition` — honest, never a fabricated success.
-    #[error("the OS keychain is unavailable on this host: {0}")]
+    /// The local store cannot be used on this host (unreadable, or refused for being
+    /// readable beyond its owner). Maps to `failed_precondition` — honest, never a
+    /// fabricated success.
+    #[error("the local secret store is unavailable: {0}")]
     Unavailable(String),
-    /// A keychain / index-store failure. Maps to `internal`.
+    /// A store read/write failure. Maps to `internal`.
     #[error("secret store error: {0}")]
     Storage(String),
 }
 
-/// The local secret-store admin seam behind the 3 MM-3 RPCs. The host implements it
-/// over the OS keychain + an off-journal NAME index. A `None` seam ⇒ the RPCs return
+/// The local secret-store admin seam behind the 3 secret RPCs. The host implements it
+/// over one operator-visible file. A `None` seam ⇒ the RPCs return
 /// `unimplemented`. Write authorization (loopback-only + authed party) is enforced at
 /// the gateway handler BEFORE this seam is called — the seam itself is a pure store.
 pub trait SecretAdmin: Send + Sync {
-    /// Store (or overwrite) the secret `value` under `name` in the OS keychain and
-    /// record the NAME in the index. The value is dropped after the keychain write;
-    /// it is never returned, logged, or journaled.
+    /// Store (or overwrite) the secret `value` under `name`. The value is dropped after
+    /// the write; it is never returned, logged, or journaled.
     ///
     /// # Errors
-    /// [`SecretAdminError::Unavailable`] if no keychain backend; [`SecretAdminError::Storage`]
-    /// on a write failure. (Name validity is checked by the handler.)
+    /// [`SecretAdminError::Unavailable`] if the store is unusable;
+    /// [`SecretAdminError::Storage`] on a write failure. (Name validity is checked by the
+    /// handler.)
     fn put(&self, name: &str, value: &str) -> Result<(), SecretAdminError>;
 
     /// List stored secret NAMES (deterministic `(name)` order), keyset-paged after
@@ -72,7 +73,7 @@ pub trait SecretAdmin: Send + Sync {
         after_name: &str,
     ) -> Result<(Vec<SecretNameView>, bool), SecretAdminError>;
 
-    /// Delete the secret `name` from the keychain + the index. Returns `true` iff a
+    /// Delete the secret `name` from the store. Returns `true` iff a
     /// secret was removed (`false` ⇒ no such name).
     ///
     /// # Errors

@@ -28,6 +28,10 @@ async fn raw_http(
     method: &str,
     path: &str,
 ) -> (String, String, Vec<u8>) {
+    // The console listener may bind just after `start` returns its addr, and a bare
+    // connect has zero tolerance for that — the same missing TCP gate the gateway
+    // clients carried, on a listener their gate does not cover.
+    common::await_listening(addr).await;
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let req = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).await.unwrap();

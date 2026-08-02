@@ -123,12 +123,6 @@ rcgen              = { version = "0.13", default-features = false, features = ["
 criterion          = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 rkyv               = "0.8"
 rusqlite           = { version = "0.32", features = ["bundled"] }
-# MM-3 (D110): a LOCAL OS-keychain secret store behind the kx-mcp SecretStore seam.
-# default-features OFF so we never pull the D-Bus `sync-secret-service` stack; each
-# crate selects a NATIVE backend per target (apple/windows/linux-keyutils) — keyutils
-# is headless-OK so Linux CI stays green + FFI-free (no libdbus). `mock` is always
-# available for tests. Permissive (MIT/Apache) — cargo-deny clean.
-keyring            = { version = "3", default-features = false }
 # DP3 (T2.3): pure-Rust HNSW (Malkov-Yashunin) ANN for the opt-in kx-dataset-hnsw
 # scale backend. Apache-2.0/MIT; `default-features = false` keeps the SIMD
 # (`simdeez_f`, x86) + nightly (`stdsimd`) features OFF in the default build — the
@@ -188,7 +182,7 @@ kx-inference         = { path = "crates/kx-inference",         version = "0.1.1"
 # WITHOUT the llamacpp feature (the default-features=false above), so a serve build
 # that uses Ollama needs no C++ toolchain. The crate's dep_wall test pins it.
 kx-ollama            = { path = "crates/kx-ollama",            version = "0.1.0" }
-kx-capability        = { path = "crates/kx-capability",        version = "0.1.1" }
+kx-capability        = { path = "crates/kx-capability",        version = "0.2.0" }
 kx-executor          = { path = "crates/kx-executor",          version = "0.2.0" }
 kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.1.1" }
 kx-proto             = { path = "crates/kx-proto",             version = "0.18.0" }
@@ -251,7 +245,7 @@ kx-refusal           = { path = "crates/kx-refusal",           version = "0.1.1"
 # MCP adapter (M5.2, D80) — McpCapability, the first production Capability impl, the
 # concrete ToolKind::Mcp dispatch. A thin SYNC client (stdio now; ureq HTTP in M5.2b)
 # so the broker trait + kx-tool-registry stay dependency-clean (no tokio/rmcp).
-kx-mcp               = { path = "crates/kx-mcp",               version = "0.1.1" }
+kx-mcp               = { path = "crates/kx-mcp",               version = "0.2.0" }
 # PR-6b-1 (D159) — the multi-server EXTERNAL MCP gateway: dials N external MCP
 # servers (stdio + Streamable-HTTP) over kx-mcp's session seam, discovers their
 # tools into the durable tools.db (kx-tool-registry), governs them via an

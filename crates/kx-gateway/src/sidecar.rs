@@ -50,6 +50,25 @@
 //! first bump lands on the `UserAuthored` upgrade arm — rename aside, recreate, import
 //! the surviving columns — rather than on a decision someone has to make under pressure
 //! after the first schema change is already needed.
+//!
+//! ## `secret_index.db` — RETIRED, and deliberately not deleted
+//!
+//! The secret store used to split itself: values in the OS keychain, names in a
+//! `secret_index.db` sidecar carrying its own schema version. It is now one file that
+//! this policy does not govern (`secrets.rs`), so the sidecar is gone from the code.
+//!
+//! An existing `secret_index.db` is left ALONE on upgrade. It is never opened, never
+//! migrated, and never removed. Deleting a file on a user's disk because the code that
+//! wrote it no longer exists is the destructive default this whole module was written to
+//! stop, and the file holds only NAMES — nothing that can leak and nothing worth
+//! reclaiming. An operator who wants it gone can delete it; the runtime will not decide
+//! that for them.
+//!
+//! There is no migration FROM it, and that is a deliberate break rather than an
+//! oversight: the values it indexed lived in the OS keychain, which the runtime no
+//! longer reads at all, so importing the names would produce a list of credentials that
+//! cannot be resolved — worse than an empty store, because it reads as working. The
+//! CHANGELOG says plainly that credentials must be stored again.
 
 use std::path::{Path, PathBuf};
 

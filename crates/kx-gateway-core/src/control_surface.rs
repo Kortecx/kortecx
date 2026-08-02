@@ -37,8 +37,8 @@
 //! question is not "does this sound active" but "does a successful call change
 //! durable state". Misclassifying a mutation as a read is the dangerous
 //! direction, so anything genuinely ambiguous is classified [`Effect::Mutate`]
-//! (`CallMcpTool` and `TestTrigger` both reach the world, and are marked
-//! accordingly).
+//! (`CallMcpTool` reaches the world; `TestTrigger` only resolves its target, but
+//! is marked a mutation anyway rather than argued down).
 
 use kx_proto::control::GatewayRpc;
 
@@ -276,7 +276,11 @@ pub const fn facet(rpc: GatewayRpc) -> Facet {
         GatewayRpc::GetScript => Facet::new(D::Scripts, R, CP),
 
         // ---- Triggers (authoring) --------------------------------------------
-        // TestTrigger fires the target, so it is a mutation regardless of its name.
+        // TestTrigger does NOT fire — it binds or authors the target and returns
+        // without submitting. It stays a mutation anyway: authoring can touch the
+        // catalogs it resolves through, and misclassifying a mutation as a read is the
+        // dangerous direction. Classified conservatively, not because it reaches the
+        // world.
         GatewayRpc::RegisterTrigger => Facet::new(D::Triggers, M, CP),
         GatewayRpc::ListTriggers => Facet::new(D::Triggers, R, CP),
         GatewayRpc::DeregisterTrigger => Facet::new(D::Triggers, M, CP),

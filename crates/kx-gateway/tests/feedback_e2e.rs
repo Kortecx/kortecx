@@ -16,7 +16,6 @@ mod common;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use kx_gateway::{start, GatewayConfig};
 use kx_journal::{Journal, SqliteJournal};
@@ -30,15 +29,11 @@ fn config(dir: &TempDir, dev_allow_local: bool) -> GatewayConfig {
     common::gateway_config(dir, dev_allow_local, HashMap::new())
 }
 
+/// The gateway's own two-gate connect (TCP accept, then the H2 handshake). The local
+/// one-second connect loop this replaces is the known CI flake — the helper's own doc
+/// records it, and it was still copied into every file in this directory.
 async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
-    let endpoint = format!("http://{addr}");
-    for _ in 0..100 {
-        if let Ok(c) = KxGatewayClient::connect(endpoint.clone()).await {
-            return c;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("client connects to the gateway at {endpoint}");
+    common::connect_client(addr).await
 }
 
 fn fb(rating: proto::FeedbackRating, message_id: &str) -> proto::SubmitFeedbackRequest {

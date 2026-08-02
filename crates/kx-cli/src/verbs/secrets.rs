@@ -1,4 +1,4 @@
-//! `kx secrets set | list | rm` — manage the LOCAL OS-keychain secret store
+//! `kx secrets set | list | rm` — manage the LOCAL secret store
 //! (MM-3 / D110) over the gateway RPCs (`PutSecret` / `ListSecretNames` /
 //! `DeleteSecret`). Tri-surface parity with the UI + SDK.
 //!

@@ -528,6 +528,19 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // SqliteToolRegistry's lookups are live DB reads, so the react path resolves
     // byte-identically to the prior in-memory `registry_with_echo`.
     let catalog_dir = resolve_catalog_dir(&cfg)?;
+    // The local secret store, opened ONCE here and shared by every consumer below (the
+    // admin RPCs, the http@1 chain, the MCP dial chain, the webhook verifier) so they all
+    // read the same file. An unreadable store — corrupt, or readable by group/others — is a
+    // warning, never a failed serve: the three secret RPCs then report `unimplemented`, the
+    // resolve chain degrades to its environment arm, and the operator's file is left exactly
+    // as it was for them to fix.
+    let secret_store = match crate::secrets::SecretFile::open(&catalog_dir) {
+        Ok(s) => Some(Arc::new(s)),
+        Err(error) => {
+            tracing::warn!(%error, "secret store unavailable; secret RPCs report unimplemented");
+            None
+        }
+    };
     // Through the sidecar upgrade policy, as UserAuthored: this store holds every
     // registered tool AND every registered script, none of it derivable.
     let tool_registry = Arc::new(crate::tool_store::open(&catalog_dir)?);
@@ -1106,7 +1119,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         tracing::warn!(%error, "RC4b: failed to seed retrieve@1 into tools.db");
     }
     // The workflow http step: seed http@1 + register the capability over the SAME
-    // keychain→env secret chain the MCP dial uses. mcp-gateway-gated (the ureq +
+    // store→env secret chain the MCP dial uses. mcp-gateway-gated (the ureq +
     // secret-store surface lives there); a build without it authors no http steps
     // (the tool is absent from the registry, so authoring refuses fail-closed).
     #[cfg(feature = "mcp-gateway")]
@@ -1120,11 +1133,15 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         ) {
             tracing::warn!(%error, "failed to seed http@1 into tools.db");
         }
-        let http_secrets: std::sync::Arc<dyn kx_mcp::SecretStore> =
-            std::sync::Arc::new(kx_mcp::ChainedSecretStore::new(
-                std::sync::Arc::new(crate::secrets::KeyringSecretStore::os()),
+        let http_secrets: std::sync::Arc<dyn kx_mcp::SecretStore> = match secret_store.as_ref() {
+            Some(file) => std::sync::Arc::new(kx_mcp::ChainedSecretStore::new(
+                file.clone(),
                 std::sync::Arc::new(kx_mcp::EnvSecretStore),
-            ));
+            )),
+            // No readable store ⇒ the environment arm alone. A name present only in the
+            // environment keeps resolving; nothing is fabricated.
+            None => std::sync::Arc::new(kx_mcp::EnvSecretStore),
+        };
         crate::http_tool::register_http_capability(&local_broker, http_secrets);
     }
     // RC5a (durable memory): seed remember@1 + recall@1 into the durable registry so
@@ -1930,25 +1947,19 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         gateway = gateway.with_hosted_supervisor(hosted_supervisor);
         tracing::info!("D213: hosted-app supervisor wired (hosted-apps)");
     }
-    // MM-3 (D110): wire the LOCAL secret store admin (PutSecret/ListSecretNames/
-    // DeleteSecret) over the OS keychain + the off-journal secret_index.db NAME index.
-    // Secret WRITES are gated loopback-only (the local-first default): a network-exposed
-    // bind leaves writes refused (permission_denied) since a remote peer can't be told
-    // from the local operator behind the gRPC-web/CORS layers. A secret_index.db open
-    // failure leaves the 3 RPCs `unimplemented` — never aborts serve. Off-journal,
-    // off-digest (the value lives in the OS keychain, never the journal — D81).
-    match crate::secrets::KeychainSecretAdmin::open(&catalog_dir) {
-        Ok(secret_admin) => {
-            let writes_loopback_ok = cfg.listen.ip().is_loopback();
-            gateway = gateway.with_secret_admin(Arc::new(secret_admin), writes_loopback_ok);
-            tracing::info!(
-                loopback = writes_loopback_ok,
-                "MM-3: local secret store wired (secret_index.db)"
-            );
-        }
-        Err(error) => {
-            tracing::warn!(%error, "MM-3: secret store unavailable; secret RPCs return unimplemented");
-        }
+    // Wire the LOCAL secret store admin (PutSecret/ListSecretNames/DeleteSecret) over the
+    // `secrets.json` store opened above. Secret WRITES are gated loopback-only (the
+    // local-first default): a network-exposed bind leaves writes refused
+    // (permission_denied) since a remote peer can't be told from the local operator behind
+    // the gRPC-web/CORS layers. An unreadable store leaves the 3 RPCs `unimplemented` —
+    // never aborts serve. Off-journal, off-digest (D81).
+    if let Some(secret_admin) = secret_store.clone() {
+        let writes_loopback_ok = cfg.listen.ip().is_loopback();
+        gateway = gateway.with_secret_admin(secret_admin, writes_loopback_ok);
+        tracing::info!(
+            loopback = writes_loopback_ok,
+            "local secret store wired (secrets.json)"
+        );
     }
     // T-APP-TRIGGER-TARGET: build the App-run resolver (the RunApp seam) HERE — before
     // the trigger seam — so an App-target trigger can fire a credentialed App through the
@@ -2204,6 +2215,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             tool_registry.clone(),
             local_broker.clone(),
             content.clone(),
+            secret_store.clone(),
         ) {
             Ok(admin) => {
                 gateway = gateway.with_mcp_admin(admin);
@@ -2560,6 +2572,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 triggers_db,
                 admin_dyn,
                 bind_is_loopback,
+                secret_store.clone(),
             ));
             aux.push(tokio::spawn(crate::webhook::serve_webhook(tcp, state)));
             if let Some(local) = webhook_local_addr {

@@ -215,7 +215,7 @@ invariant, frozen trio untouched). **G3 (cross-instance import) is the remaining
 ### Out of scope for OSS (Cloud)
 Per-party credential isolation on a **single shared instance** (multiple users, each
 with their own credentials resolved per-caller): connections/secrets are
-operator-global today (`connections.db` PK is `name`; the OS keychain is
+operator-global today (`connections.db` PK is `name`; the secret store is
 per-machine), and D129 / D170.b allocate multi-tenant secrets + a KMS/HSM vault +
 the connector marketplace to **Cloud**. Cross-instance sharing (each user runs their
 own `kx serve`, per G3) is the OSS path.

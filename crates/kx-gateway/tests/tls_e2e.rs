@@ -47,7 +47,9 @@ async fn tls_client(port: u16, ca_pem: &[u8]) -> KxGatewayClient<tonic::transpor
         .unwrap()
         .tls_config(tls)
         .unwrap();
-    // Retry briefly while the serve task finishes binding.
+    // Gate 1 first: wait for the listener to ACCEPT, then retry the TLS handshake. The
+    // missing TCP wait is the flake, not the handshake (see `common::await_listening`).
+    common::await_listening(format!("127.0.0.1:{port}").parse().unwrap()).await;
     for _ in 0..100 {
         if let Ok(ch) = endpoint.connect().await {
             return KxGatewayClient::new(ch);

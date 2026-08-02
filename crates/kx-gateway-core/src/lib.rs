@@ -71,8 +71,8 @@ mod mcp_gateway_admin;
 // embedder. Off the journal/digest — memory.db is a rebuildable sidecar (no schema
 // bump). Recall commits only the ordered ref set; the score is display-only.
 mod memory;
-// MM-3 (D110): the LOCAL secret-store admin seam (PutSecret/ListSecretNames/
-// DeleteSecret). Pure vocabulary trait; the host impl is keychain-backed. The
+// The LOCAL secret-store admin seam (PutSecret/ListSecretNames/
+// DeleteSecret). Pure vocabulary trait; the host impl is file-backed. The
 // value is write-only (put arg) — never on a return type, the wire, or the journal.
 mod secret_admin;
 // D114/M11 (autonomy safety): the approval + cost-readout admin seam

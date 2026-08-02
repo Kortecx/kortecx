@@ -43,13 +43,12 @@ impl SecretStore for EnvSecretStore {
 
 /// A two-arm resolver: try `primary`, then fall back to `secondary`.
 ///
-/// This is the seam that lets a host-side OS-keychain store (MM-3) take
-/// precedence while the pre-MM-3 [`EnvSecretStore`] stays a permanent fallback —
-/// so every connection whose `credential_ref` names a host env var keeps
-/// resolving unchanged (back-compat), and a name present in BOTH wins from the
-/// `primary` (the keychain). It is a pure combinator with no dependency of its
-/// own; the concrete keychain impl lives in the host crate (which already
-/// carries the platform-native deps), keeping this adapter dependency-clean.
+/// This is the seam that lets a host-side local store take precedence while
+/// [`EnvSecretStore`] stays a permanent fallback — so every connection whose
+/// `credential_ref` names a host env var keeps resolving unchanged (back-compat),
+/// and a name present in BOTH wins from the `primary` (the local store). It is a
+/// pure combinator with no dependency of its own; the concrete store impl lives in
+/// the host crate, keeping this adapter dependency-clean.
 pub struct ChainedSecretStore {
     primary: Arc<dyn SecretStore>,
     secondary: Arc<dyn SecretStore>,
@@ -75,7 +74,7 @@ impl SecretStore for ChainedSecretStore {
 mod tests {
     use super::*;
 
-    /// A fixed in-memory store, standing in for the host keychain in unit tests.
+    /// A fixed in-memory store, standing in for the host secret store in unit tests.
     struct MapStore(std::collections::BTreeMap<String, String>);
     impl SecretStore for MapStore {
         fn resolve(&self, secret_ref: &SecretRef) -> Option<String> {

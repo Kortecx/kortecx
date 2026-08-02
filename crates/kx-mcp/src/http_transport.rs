@@ -229,14 +229,22 @@ impl McpTransport for HttpTransport {
 
         // Resolve credential secrets transiently HERE (they live only in this local
         // Vec for the duration of the call, then drop — never on `self`).
-        let headers: Vec<(String, String)> = self
-            .credentials
-            .iter()
-            .filter_map(|(name, cred)| {
-                cred.read_secret(&*self.secret_store)
-                    .map(|val| (name.clone(), val))
-            })
-            .collect();
+        //
+        // A NAMED credential that does not resolve REFUSES the call rather than dropping
+        // its header. Dropping it sends a request the caller never authorised — an
+        // unauthenticated call to a third party — and the only diagnosis is then the far
+        // end's own generic rejection, which reads as "your token is wrong" and sends the
+        // operator to the remote service's settings instead of their own store. A
+        // connector that needs no credential simply names none, and this loop is empty.
+        let mut headers: Vec<(String, String)> = Vec::with_capacity(self.credentials.len());
+        for (header, cred) in &self.credentials {
+            let Some(value) = cred.read_secret(&*self.secret_store) else {
+                return Err(TransportError::CredentialUnresolved {
+                    name: cred.identity().to_string(),
+                });
+            };
+            headers.push((header.clone(), value));
+        }
         let idempotency_header = idempotency_key.map(hex32);
 
         // Clone the pooled agent (Arc-shared) + owned inputs onto the worker thread,
@@ -362,14 +370,18 @@ impl HttpSession {
         let worker_timeout =
             Duration::from_millis(budget_ms.saturating_add(WORKER_BACKSTOP_SLACK_MS));
 
-        let headers: Vec<(String, String)> = self
-            .credentials
-            .iter()
-            .filter_map(|(name, cred)| {
-                cred.read_secret(&*self.secret_store)
-                    .map(|val| (name.clone(), val))
-            })
-            .collect();
+        // This is the SESSION's own resolution, distinct from `HttpTransport::call`'s.
+        // The connector path dispatches through here, so a refusal added only to the
+        // one-shot path would leave the session sending uncredentialed requests.
+        let mut headers: Vec<(String, String)> = Vec::with_capacity(self.credentials.len());
+        for (header, cred) in &self.credentials {
+            let Some(value) = cred.read_secret(&*self.secret_store) else {
+                return Err(TransportError::CredentialUnresolved {
+                    name: cred.identity().to_string(),
+                });
+            };
+            headers.push((header.clone(), value));
+        }
         let idempotency_header = idempotency_key.map(hex32);
         let session_header = self.session_id.clone();
         // Echo the negotiated version (RC servers that negotiated DOWN reject a

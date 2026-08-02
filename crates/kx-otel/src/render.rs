@@ -10,6 +10,10 @@
 
 use std::fmt::Write as _;
 
+/// Minimum window before a p95 is published. Below this, nearest-rank puts the 95th
+/// percentile at the top sample, so the "p95" is just the maximum.
+const MIN_WINDOW_FOR_P95: u64 = 20;
+
 use crate::fold::{MetricsState, FAILURE_REASON_LABELS};
 
 /// Build metadata surfaced as `kortecx_build_info{version="…"} 1`.
@@ -128,9 +132,16 @@ pub fn render(state: &MetricsState, build: &BuildInfo, latency: Option<&LatencyS
         "Runs admitted (RunRegistered journal facts).",
         state.runs_registered,
     );
+    // NOT a ratio with the committed counter, and the help text says so. A distributed
+    // worker runs the executor against a SCRATCH journal it does not own and reports the
+    // commit over RPC, so the Proposed facts of a served run are never journaled — this
+    // counter stays at 0 on a serve while the committed counter climbs. Reading the two
+    // as proposed-vs-committed reports a total failure rate on a healthy runtime.
     w.counter(
         "kortecx_motes_proposed_total",
-        "Mote placements proposed (Proposed journal facts).",
+        "Mote placements proposed (Proposed journal facts). In-process runs only: a \
+         distributed worker reports its commit without journaling a Proposed fact, so \
+         this is NOT a denominator for kortecx_motes_committed_total.",
         state.proposed,
     );
     w.counter(
@@ -183,14 +194,24 @@ pub fn render(state: &MetricsState, build: &BuildInfo, latency: Option<&LatencyS
     if let Some(l) = latency {
         w.gauge(
             "kortecx_mote_wall_p50_ms",
-            "Recent-window p50 per-Mote wall-clock latency (ms; model motes).",
+            "Recent-window p50 per-Mote wall-clock latency (ms; model motes). \
+             Window size is kortecx_telemetry_window_motes.",
             l.p50_ms,
         );
-        w.gauge(
-            "kortecx_mote_wall_p95_ms",
-            "Recent-window p95 per-Mote wall-clock latency (ms; model motes).",
-            l.p95_ms,
-        );
+        // The p95 is SUPPRESSED on a window too small to have a tail. Nearest-rank over
+        // n samples puts the 95th percentile at the top sample for any n below 20, so on
+        // a fresh serve it is simply the slowest (and only) Mote — published under a name
+        // that promises a tail estimate. A missing series is an honest absence; a number
+        // that equals p50 and is read as a tail is not. The median is still useful at
+        // small n, so it keeps publishing.
+        if l.window >= MIN_WINDOW_FOR_P95 {
+            w.gauge(
+                "kortecx_mote_wall_p95_ms",
+                "Recent-window p95 per-Mote wall-clock latency (ms; model motes). \
+                 Absent until the window holds enough samples to have a tail.",
+                l.p95_ms,
+            );
+        }
         w.gauge(
             "kortecx_telemetry_window_motes",
             "Number of recent model Motes the latency window covers.",
@@ -247,6 +268,49 @@ mod tests {
         assert!(!out.contains("kortecx_mote_wall_p50_ms"));
         assert!(!out.contains("kortecx_mote_wall_p95_ms"));
         assert!(out.contains("kortecx_up 1"));
+    }
+
+    /// ★ A window too small to have a tail publishes the MEDIAN and omits the p95.
+    ///
+    /// On a fresh serve the window is one Mote and nearest-rank puts the 95th percentile
+    /// on the only sample, so `p95` and `p50` render the same number — read as a tail, it
+    /// says the slowest request equals the typical one. The median is still meaningful at
+    /// n=1; the tail estimate is not, so it is absent rather than wrong.
+    #[test]
+    fn a_window_too_small_for_a_tail_publishes_the_median_and_omits_the_p95() {
+        let one = LatencySummary {
+            window: 1,
+            p50_ms: 17690,
+            p95_ms: 17690, // nearest-rank over one sample: the same number, by construction
+            output_tokens: 12,
+        };
+        let out = render(&sample_state(), &BUILD, Some(&one));
+        assert!(
+            out.contains("kortecx_mote_wall_p50_ms 17690"),
+            "the median is still published — it is meaningful at any window size"
+        );
+        assert!(
+            !out.contains("kortecx_mote_wall_p95_ms"),
+            "the p95 must be ABSENT, not equal to the p50: a missing series is an honest \
+             gap, a number that promises a tail and delivers the maximum is not"
+        );
+        assert!(
+            out.contains("kortecx_telemetry_window_motes 1"),
+            "and the window size is published, so a reader can see why"
+        );
+
+        // THE ACCEPTING CONTROL, one variable changed: the same summary over a window
+        // large enough to have a tail publishes both.
+        let many = LatencySummary {
+            window: MIN_WINDOW_FOR_P95,
+            ..one
+        };
+        let out = render(&sample_state(), &BUILD, Some(&many));
+        assert!(
+            out.contains("kortecx_mote_wall_p95_ms 17690"),
+            "at the threshold the p95 returns — without this the assertion above would \
+             pass on an implementation that never publishes a p95 at all"
+        );
     }
 
     #[test]

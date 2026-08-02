@@ -485,6 +485,53 @@ impl TriggerAdmin for HostTriggerAdmin {
         };
         // A dry-run authors/binds but NEVER submits; a resolution failure is a non-fatal
         // (ok=false) detail, an internal store error is fatal.
+        //
+        // Route by target in the SAME order `submit` does. Branching on the App handle
+        // alone sent a workflow-target trigger into the recipe binder with an EMPTY
+        // handle, so the only validation verb a trigger has answered a question about a
+        // recipe that was never named — and reported failure for a trigger that fires
+        // perfectly well.
+        if !cfg.workflow_handle.is_empty() {
+            let Some(runner) = self.workflow_runner.as_ref() else {
+                return Ok((false, "workflow-run seam not wired on this serve".into()));
+            };
+            return match runner
+                .author_app(
+                    &cfg.owner_party,
+                    &cfg.workflow_handle,
+                    &args,
+                    cfg.require_approval,
+                )
+                .await
+            {
+                Ok(bound) => Ok((
+                    true,
+                    format!(
+                        "authors '{}' ({} mote{})",
+                        cfg.workflow_handle,
+                        bound.motes.len(),
+                        if bound.motes.len() == 1 { "" } else { "s" }
+                    ),
+                )),
+                Err(AppRunError::NotAuthorized) => {
+                    Ok((false, "not authorized for the workflow".into()))
+                }
+                Err(AppRunError::InvalidArgs(d)) => {
+                    Ok((false, format!("payload does not bind: {d}")))
+                }
+                Err(AppRunError::MissingIntegration(n)) => {
+                    Ok((false, format!("missing integration: {n}")))
+                }
+                Err(AppRunError::UnservedModelRoute(route)) => {
+                    Ok((false, format!("model route {route:?} is not served here")))
+                }
+                Err(AppRunError::UncomposableApp { handle, reason }) => Ok((
+                    false,
+                    format!("cannot compose workflow {handle:?}: {reason}"),
+                )),
+                Err(AppRunError::Internal(d)) => Err(TriggerAdminError::Storage(d)),
+            };
+        }
         if cfg.app_handle.is_empty() {
             match self
                 .binder
