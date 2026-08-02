@@ -54,6 +54,16 @@ pub enum TransportError {
     /// An I/O error writing the request or reading the response.
     #[error("MCP transport I/O error: {0}")]
     Io(String),
+    /// A credential this transport NAMES did not resolve — neither the local secret
+    /// store nor the environment holds it. Refused BEFORE the request is sent: dropping
+    /// the header instead would send an unauthenticated request the caller never asked
+    /// for, and surface the far end's generic rejection, which points the operator at the
+    /// remote system's settings rather than at their own store.
+    #[error("MCP transport credential {name:?} did not resolve on this host")]
+    CredentialUnresolved {
+        /// The credential NAME that did not resolve (never its value).
+        name: String,
+    },
     /// The round-trip exceeded the per-call wall-clock budget. Maps to `Timeout`.
     #[error("MCP transport timed out after {wall_clock_ms} ms")]
     Timeout {
@@ -82,6 +92,9 @@ impl From<TransportError> for CapabilityFailureReason {
     fn from(e: TransportError) -> Self {
         match e {
             TransportError::Unreachable(_) => CapabilityFailureReason::NetworkUnreachable,
+            TransportError::CredentialUnresolved { name } => {
+                CapabilityFailureReason::CredentialUnresolved(name)
+            }
             TransportError::Timeout { .. } => CapabilityFailureReason::Timeout,
             TransportError::Io(msg) => CapabilityFailureReason::Other(msg),
         }

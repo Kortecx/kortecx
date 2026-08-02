@@ -69,6 +69,25 @@ impl CredentialRef {
         }
     }
 
+    /// Inject as [`inject_into`], but report whether the ref RESOLVED.
+    ///
+    /// `false` ⇒ nothing was injected. A transport that NAMES a credential should refuse
+    /// on this rather than spawn the child anyway: the child then fails its own auth and
+    /// the resulting diagnostic describes the remote system's opinion of a credential
+    /// that was never sent, which points an operator at the wrong place entirely.
+    ///
+    /// [`inject_into`]: Self::inject_into
+    #[must_use]
+    pub fn try_inject_into(&self, store: &dyn SecretStore, cmd: &mut Command) -> bool {
+        match store.resolve(&self.secret_ref) {
+            Some(secret) => {
+                cmd.env(&self.secret_ref.0, secret);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Read the referenced secret transiently through `store`, for injection as an
     /// HTTP request header (the M5.2b [`crate::HttpTransport`] path — stdio injects
     /// into the child env instead, [`inject_into`]).

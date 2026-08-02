@@ -125,6 +125,31 @@ fn every_sidecar_schema_version_is_classified() {
     );
 }
 
+/// The secret store holds authored work but is NOT a sqlite sidecar — it is one file, so
+/// the sidecar policy has nothing to classify. Its protection MOVED rather than lapsed:
+/// a store the runtime cannot read is REFUSED at open instead of recreated empty, because
+/// recreating would silently destroy every credential the operator had stored.
+///
+/// This clause exists so deleting that protection is a visible edit, exactly as removing
+/// a name from `AUTHORED` above would be. It names the behavioural guard rather than
+/// re-checking the behaviour, which `secrets.rs`'s own tests already do.
+#[test]
+fn the_secret_store_refuses_an_unreadable_file_rather_than_recreating_it() {
+    let src = std::fs::read_to_string(gateway_src().join("secrets.rs")).unwrap();
+    assert!(
+        src.contains("fn a_corrupt_file_is_refused_rather_than_recreated"),
+        "the guard that a corrupt secret store is refused rather than recreated is gone. \
+         Recreating it empty loses every stored credential and reports 'you have no \
+         secrets', which is a worse answer than an error — restore the guard or argue \
+         for the change here."
+    );
+    assert!(
+        !production_source(&gateway_src().join("secrets.rs")).contains("unwrap_or_default"),
+        "the secret store must not fall back to an empty map on a read it could not \
+         parse — that is the silent-destruction path this clause exists to prevent"
+    );
+}
+
 /// The classification is a real decision, so BOTH answers must be in use.
 ///
 /// If every store were `Cache` the policy would be an elaborate way to spell the old
@@ -142,7 +167,6 @@ fn the_stores_holding_authored_work_are_named_and_protected() {
         "branches.rs",
         "triggers_store.rs",
         "skills.rs",
-        "secrets.rs",
         // tools.db: registered tools AND every registered script.
         "tool_store.rs",
         // policies.db: durable Policy/Roles. Losing one does not lose a
