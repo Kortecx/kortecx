@@ -78,7 +78,24 @@ export class Server {
   }
 }
 
-/** Poll the gateway with a unary RPC until it answers (any gRPC status = ready). */
+/**
+ * Poll the gateway with a unary RPC until THIS endpoint is a healthy `kx serve`.
+ *
+ * `unimplemented` is NOT ready, and that distinction is the whole point. `kx serve` wires
+ * its signature catalog unconditionally, so a process answering `listSignatures` with
+ * `unimplemented` is not a healthy gateway — it is something else holding the port. The
+ * spawn helper below documents exactly how that happens: `freePort()` releases the port the
+ * instant it closes its probe socket, so another process can take it before `kx serve`
+ * binds. Accepting `unimplemented` as "a real gRPC response, so the server IS ready" made
+ * this probe report READY in precisely the state it exists to exclude, and every test then
+ * failed against the wrong server with `UNIMPLEMENTED` where it expected a real answer.
+ *
+ * Ask what a readiness probe prints when the thing it measures is ABSENT. This one used to
+ * print "ready".
+ *
+ * Everything else (`unauthenticated`, `permission_denied`, an argument error …) still means
+ * ready: those are the gateway answering with its own policy, which requires it to be wired.
+ */
 async function waitReady(endpoint: string, proc: ChildProcess, timeoutMs = 40_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const probe = new KxClient(endpoint);
@@ -92,16 +109,18 @@ async function waitReady(endpoint: string, proc: ChildProcess, timeoutMs = 40_00
         return; // resolved → ready
       } catch (e) {
         const code = (e as { code?: string }).code;
-        // unavailable / connect = not up yet; anything else (unimplemented,
-        // unauthenticated, …) is a real gRPC response, so the server IS ready.
-        if (code === "unavailable" || code === "connect") {
+        // Not up yet, or not OURS yet — keep waiting rather than proceeding against
+        // whatever answered.
+        if (code === "unavailable" || code === "connect" || code === "unimplemented") {
           await sleep(100);
           continue;
         }
         return;
       }
     }
-    throw new Error("kx serve did not become ready in time");
+    throw new Error(
+      `kx serve at ${endpoint} did not become ready in time — it never answered as a healthy gateway; if this reproduces, the port may be held by another process`,
+    );
   } finally {
     probe.close();
   }
