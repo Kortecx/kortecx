@@ -204,6 +204,23 @@ fn settled_from_raw(
     blob
 }
 
+/// Refusal audit: give every `"rejected"` row on the PAGE the output it was settled
+/// FROM, so a heuristic refusal can be checked against its own input rather than taken
+/// on trust.
+///
+/// Called AFTER paging on purpose — bounded twice over (one page of rows, and only the
+/// refusals within it), so a large journal never turns this into a blob read per turn.
+fn fill_refusal_audit(
+    rows: &mut [proto::ReactTurnSummary],
+    content: Option<&dyn ContentReader>,
+    turn_result: &HashMap<[u8; 32], ContentRef>,
+) {
+    for row in rows.iter_mut().filter(|r| r.branch == "rejected") {
+        let key: Option<[u8; 32]> = row.turn_mote_id.as_slice().try_into().ok();
+        row.raw = settled_from_raw(content, key.as_ref().and_then(|k| turn_result.get(k)));
+    }
+}
+
 /// Fold the journal's `ReactRound` facts and return one newest-first page of
 /// turn summaries, optionally scoped to one run's `instance_id`. `limit` is
 /// clamped to `[1, MAX_PAGE]` (or [`DEFAULT_PAGE`] when absent). A present-but-
@@ -353,15 +370,7 @@ pub(crate) fn list_react_turns(
     let page = limit.map_or(DEFAULT_PAGE, |l| (l as usize).clamp(1, MAX_PAGE));
     let has_more = all.len() > page;
     all.truncate(page);
-    // Refusal audit, AFTER paging: show a refused turn the output it was settled FROM, so
-    // a heuristic refusal can be checked against its own input rather than taken on trust.
-    // Bounded twice over — one page of rows, only the "rejected" ones, each capped.
-    for row in &mut all {
-        if row.branch == "rejected" {
-            let key: Option<[u8; 32]> = row.turn_mote_id.as_slice().try_into().ok();
-            row.raw = settled_from_raw(content, key.as_ref().and_then(|k| turn_result.get(k)));
-        }
-    }
+    fill_refusal_audit(&mut all, content, &turn_result);
     Ok(proto::ListReactTurnsResponse {
         turns: all,
         has_more,

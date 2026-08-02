@@ -197,6 +197,13 @@ impl BrokerError {
     /// Exhaustive with no wildcard: a new variant fails `cargo check` here and must be
     /// classified deliberately, rather than defaulting into a retry loop.
     #[must_use]
+    // `Other(_)` deliberately keeps its own arm despite sharing a body with the closed
+    // transient set. The two say different things: those variants are KNOWN retryable,
+    // while `Other` is UNKNOWN and treated as retryable because the arm carries free text
+    // this method refuses to parse. Merging them would erase the boundary at the exact
+    // site a reader needs it — and the boundary is load-bearing, because the failure
+    // measured on the live serve arrives through `Other` and is therefore NOT covered.
+    #[allow(clippy::match_same_arms)]
     pub fn is_permanent(&self) -> bool {
         match self {
             // Verdicts. The declaration, the warrant, the pattern and the confinement are
