@@ -47,6 +47,11 @@ pub(crate) fn score_run(
             tool_version: r.tool_version.clone(),
             call_index: r.call_index,
             rejection_reason: r.rejection_reason.clone(),
+            // Always EMPTY on this path, and deliberately so: the fold above passes no
+            // content reader (scoring needs branch/turn/caps, not blobs), so there is
+            // nothing to resolve a refused turn's settled-from output from. Mapped rather
+            // than defaulted so the reason is here rather than inferred from an omission.
+            raw: r.raw.clone(),
         })
         .collect();
 

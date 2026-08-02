@@ -92,6 +92,7 @@ mod tests {
             },
             call_index: 0,
             rejection_reason: String::new(),
+            raw: Vec::new(),
         }
     }
 

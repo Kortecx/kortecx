@@ -43,16 +43,20 @@ fn arb_commit_protocol_error() -> impl Strategy<Value = CommitProtocolError> {
         // permanence flag is independent for the same reason: it is a THIRD audience
         // (the retry policy), and a permanent failure with a detail and a transient one
         // without are both real shapes the fold must handle.
-        (arb_mote_id(), "[a-z]{0,16}", "[a-z ]{0,24}", proptest::bool::ANY).prop_map(
-            |(mote_id, reason, model_detail, permanent)| {
+        (
+            arb_mote_id(),
+            "[a-z]{0,16}",
+            "[a-z ]{0,24}",
+            proptest::bool::ANY
+        )
+            .prop_map(|(mote_id, reason, model_detail, permanent)| {
                 CommitProtocolError::BrokerDispatchFailed {
                     mote_id,
                     reason,
                     model_detail,
                     permanent,
                 }
-            },
-        ),
+            },),
         (arb_mote_id(), "[a-z]{0,16}").prop_map(|(mote_id, reason)| {
             CommitProtocolError::ContentStorePutFailed { mote_id, reason }
         }),

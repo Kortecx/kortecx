@@ -97,6 +97,7 @@ mod tests {
             tool_version: "1".into(),
             call_index,
             rejection_reason: String::new(),
+            raw: Vec::new(),
         }
     }
 

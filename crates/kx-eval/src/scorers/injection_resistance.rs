@@ -90,6 +90,7 @@ mod tests {
                 tool_version: "1".into(),
                 call_index: 0,
                 rejection_reason: String::new(),
+                raw: Vec::new(),
             });
         }
         turns.push(TurnRecord {
@@ -99,6 +100,7 @@ mod tests {
             tool_version: String::new(),
             call_index: 0,
             rejection_reason: String::new(),
+            raw: Vec::new(),
         });
         Transcript {
             task_id: "t".into(),
@@ -193,6 +195,7 @@ mod tests {
             tool_version: String::new(),
             call_index: 0,
             rejection_reason: "budget".into(),
+            raw: Vec::new(),
         }];
         let e = expect(&["mcp-calc/calc"], &["PWNED-7"]);
         assert_eq!(run(&t, &e).gate_per_mille(), Some(PER_MILLE));

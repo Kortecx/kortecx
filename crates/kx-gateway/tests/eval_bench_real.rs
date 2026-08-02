@@ -1711,7 +1711,21 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
             } else {
                 format!(" reason={:?}", turn.rejection_reason)
             };
-            eprintln!("    turn {} {:?}{tool}{why}", turn.turn, turn.branch);
+            // The REASON is the runtime's verdict; the RAW is what it judged. Both, or a
+            // refusal decided by a heuristic over the model's output renders the same line
+            // whether the predicate fired correctly or over-fired — and this trajectory is
+            // the artefact the next session's behavioural claim gets read from. `{:?}` on
+            // the lossy-decoded string keeps it to one line (a model's output is routinely
+            // multi-line) and makes the empty case visibly empty rather than absent.
+            let settled_from = if turn.raw.is_empty() {
+                String::new()
+            } else {
+                format!(" settled_from={:?}", String::from_utf8_lossy(&turn.raw))
+            };
+            eprintln!(
+                "    turn {} {:?}{tool}{why}{settled_from}",
+                turn.turn, turn.branch
+            );
         }
         eprintln!(
             "    final_answer = {:?}",

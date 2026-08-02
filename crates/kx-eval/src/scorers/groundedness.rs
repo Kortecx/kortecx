@@ -50,6 +50,7 @@ mod tests {
                 tool_version: String::new(),
                 call_index: 0,
                 rejection_reason: String::new(),
+                raw: Vec::new(),
             }],
             final_answer: Some(answer.to_string()),
             retrieved_docs: docs.iter().map(|d| (*d).to_string()).collect(),
