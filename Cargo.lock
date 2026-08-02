@@ -1596,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "kx-coordinator"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "getrandom 0.3.4",
@@ -2253,7 +2253,7 @@ dependencies = [
 
 [[package]]
 name = "kx-proto"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "bincode 2.0.1",
  "kx-content",
@@ -2438,7 +2438,7 @@ dependencies = [
 
 [[package]]
 name = "kx-worker"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "kx-capability",
  "kx-content",

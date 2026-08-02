@@ -194,6 +194,10 @@ pub(crate) enum Command {
         idempotency_key: [u8; 32],
         reason_class: FailureReason,
         worker: WorkerId,
+        /// v18 — the reporter's MODEL-FACING diagnostic, already bounded at the RPC
+        /// edge. Empty when the failure was the runtime's own, which is the pre-v18
+        /// behaviour byte for byte.
+        detail: String,
         reply: oneshot::Sender<Result<(u64, bool), CoordinatorError>>,
     },
     RegisterRun {
@@ -461,6 +465,7 @@ impl CoreHandle {
         idempotency_key: [u8; 32],
         reason_class: FailureReason,
         worker: WorkerId,
+        detail: String,
     ) -> Result<(u64, bool), CoordinatorError> {
         let (reply, response) = oneshot::channel();
         self.dispatch(Command::ReportFailure {
@@ -468,6 +473,7 @@ impl CoreHandle {
             idempotency_key,
             reason_class,
             worker,
+            detail,
             reply,
         })
         .await?;
@@ -1812,6 +1818,7 @@ fn dead_letter_failure<J: Journal>(
     idempotency_key: [u8; 32],
     reason_class: FailureReason,
     worker: WorkerId,
+    detail: String,
 ) -> Result<(u64, bool), CoordinatorError> {
     // No-op cases first — these write nothing, so they are benign for ANY reporter and
     // must NOT be rejected by the admission gate (the lease is already resolved by the
@@ -1840,7 +1847,12 @@ fn dead_letter_failure<J: Journal>(
         seq: 0,
         reason_class,
         reporter_id: worker_reporter_id(worker),
-        detail: String::new(),
+        // v18: the REPORTER's model-facing diagnostic. This is the only one of the four
+        // `Failed` constructions in this file that has one — the other three are the
+        // coordinator observing a death (a crashed worker, a wait-mote and a launch-mote
+        // dead-letter) and carry no downstream detail to forward. Empty here is the
+        // pre-v18 behaviour, byte for byte, so a worker that sends no field is unchanged.
+        detail,
     };
     let durable = journal.append(entry)?;
     let seq = durable.seq();
@@ -2238,6 +2250,7 @@ fn handle_command<J: Journal>(
             idempotency_key,
             reason_class,
             worker,
+            detail,
             reply,
         } => {
             let outcome = dead_letter_failure(
@@ -2249,6 +2262,7 @@ fn handle_command<J: Journal>(
                 idempotency_key,
                 reason_class,
                 worker,
+                detail,
             );
             let _ = reply.send(outcome);
         }

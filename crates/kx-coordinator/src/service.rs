@@ -614,9 +614,14 @@ impl Coordinator for CoordinatorService {
         // EffectStaged) leave the Mote re-dispatchable forever (the F4 hang). The proto
         // enum's UNSPECIFIED=0 sentinel is rejected by `worker_reportable_reason`.
         let reason_class = worker_reportable_reason(req.reason_class)?;
+        // v18: the reporter's MODEL-FACING detail. Bounded HERE rather than trusted —
+        // it is untrusted text from another process, it lands on a durable entry fenced
+        // by `MAX_ENTRY_LEN`, and it is rendered into a model prompt. The worker bounds
+        // it too; neither side may assume the other ran.
+        let detail = kx_journal::bounded_failure_detail(&req.detail);
         let (failed_seq, appended) = self
             .core
-            .report_failure(mote_id, idempotency_key, reason_class, worker)
+            .report_failure(mote_id, idempotency_key, reason_class, worker, detail)
             .await?;
         // W1a (T-OBS1): a freshly-appended terminal failure is an operator-relevant
         // event (a deduped re-report is not). Off the truth path; never gates the run.

@@ -394,6 +394,20 @@ pub async fn report_failure(
     worker_id: u64,
     reason: proto::FailureReason,
 ) -> Result<proto::ReportFailureResponse, tonic::Status> {
+    report_failure_with_detail(service, mote, worker_id, reason, "").await
+}
+
+/// [`report_failure`] carrying the v18 MODEL-FACING `detail` — the diagnostic the
+/// failing subsystem itself produced. Separate from the bare helper because the vast
+/// majority of callers assert the admission / idempotency / lease paths, where the
+/// detail is irrelevant and passing one would be noise; the arrival proofs need it.
+pub async fn report_failure_with_detail(
+    service: &CoordinatorService,
+    mote: &Mote,
+    worker_id: u64,
+    reason: proto::FailureReason,
+    detail: &str,
+) -> Result<proto::ReportFailureResponse, tonic::Status> {
     let id = mote.id.as_bytes().to_vec();
     service
         .report_failure(Request::new(proto::ReportFailureRequest {
@@ -401,6 +415,7 @@ pub async fn report_failure(
             idempotency_key: id,
             reason_class: reason as i32,
             worker_id,
+            detail: detail.to_string(),
         }))
         .await
         .map(tonic::Response::into_inner)

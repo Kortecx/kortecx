@@ -385,16 +385,18 @@ class ReportEffectStagedResponse(_message.Message):
     def __init__(self, staged_seq: _Optional[int] = ..., ack: bool = ...) -> None: ...
 
 class ReportFailureRequest(_message.Message):
-    __slots__ = ("mote_id", "idempotency_key", "reason_class", "worker_id")
+    __slots__ = ("mote_id", "idempotency_key", "reason_class", "worker_id", "detail")
     MOTE_ID_FIELD_NUMBER: _ClassVar[int]
     IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
     REASON_CLASS_FIELD_NUMBER: _ClassVar[int]
     WORKER_ID_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
     mote_id: bytes
     idempotency_key: bytes
     reason_class: FailureReason
     worker_id: int
-    def __init__(self, mote_id: _Optional[bytes] = ..., idempotency_key: _Optional[bytes] = ..., reason_class: _Optional[_Union[FailureReason, str]] = ..., worker_id: _Optional[int] = ...) -> None: ...
+    detail: str
+    def __init__(self, mote_id: _Optional[bytes] = ..., idempotency_key: _Optional[bytes] = ..., reason_class: _Optional[_Union[FailureReason, str]] = ..., worker_id: _Optional[int] = ..., detail: _Optional[str] = ...) -> None: ...
 
 class ReportFailureResponse(_message.Message):
     __slots__ = ("failed_seq", "ack")
