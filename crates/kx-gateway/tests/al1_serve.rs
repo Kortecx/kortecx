@@ -12,13 +12,17 @@
 //! placeholder), and greedy decode is DETERMINISTIC across two independent
 //! gateways (same prompt ⇒ byte-identical committed `result_ref`).
 //!
-//! Gated `#[cfg(feature = "inference")]` (pulls the llama.cpp FFI) AND `#[ignore]`,
+//! Gated `#[cfg(feature = "serve-engine")]` — deliberately NOT `inference`. `inference =
+//! ["serve-engine", ...]` is one-directional, so an `inference`-gated file compiles to
+//! an EMPTY harness under `console,serve-engine,hnsw,hosted-apps,observability`, the
+//! exact set the live proofs build. Gated this way it runs on BOTH builds and picks
+//! its engine at runtime.
 //! and it runtime-skips: it needs a real GGUF — fetch the public Qwen3 stand-in
 //! with `just fetch-agent-model` (or set `KX_SERVE_MODEL_GGUF`), then opt in with
 //! `cargo test -p kx-gateway --features inference -- --ignored` (or `just
 //! real-model-e2e`).
 
-#![cfg(feature = "inference")]
+#![cfg(feature = "serve-engine")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;

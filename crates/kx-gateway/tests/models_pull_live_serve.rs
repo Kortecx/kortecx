@@ -15,12 +15,16 @@
 //!    restart + is switchable. The actual pull bytes are model-nondeterministic, so
 //!    only the registration invariant is asserted (the phase is LOGGED).
 //!
-//! Gated `#[cfg(feature = "inference")]` + `#[ignore]`; runtime-skips without a model.
+//! Gated `#[cfg(feature = "serve-engine")]` — deliberately NOT `inference`. `inference =
+//! ["serve-engine", ...]` is one-directional, so an `inference`-gated file compiles to
+//! an EMPTY harness under `console,serve-engine,hnsw,hosted-apps,observability`, the
+//! exact set the live proofs build. Gated this way it runs on BOTH builds and picks
+//! its engine at runtime.
 //! Drive on **Gemma-4 locally**:
 //! `KX_SERVE_MODEL_GGUF=target/models/gemma-4-12b-it-q4_k_m.gguf \`
 //! `  cargo test -p kx-gateway --features inference --test models_pull_live_serve -- --ignored --nocapture`
 
-#![cfg(feature = "inference")]
+#![cfg(feature = "serve-engine")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;

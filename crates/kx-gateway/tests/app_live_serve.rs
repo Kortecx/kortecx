@@ -10,12 +10,16 @@
 //! `app_ref`), and the stored blueprint — submitted exactly as `kx app run`
 //! compiles it (`SubmitWorkflow` of the agentic step) — drives the live loop.
 //!
-//! Gated `#[cfg(feature = "inference")]` AND `#[ignore]`; runtime-skips without a
+//! Gated `#[cfg(all(feature = "serve-engine", feature = "hnsw"))]` — deliberately NOT `inference`. `inference =
+//! ["serve-engine", ...]` is one-directional, so an `inference`-gated file compiles to
+//! an EMPTY harness under `console,serve-engine,hnsw,hosted-apps,observability`, the
+//! exact set the live proofs build. Gated this way it runs on BOTH builds and picks
+//! its engine at runtime.
 //! GGUF. **Drive on Gemma-4 locally** (the deep-test model):
 //! `KX_SERVE_MODEL_GGUF=target/models/gemma-4-12b-it-q4_k_m.gguf \`
 //! `  cargo test -p kx-gateway --features inference --test app_live_serve -- --ignored --nocapture`
 
-#![cfg(feature = "inference")]
+#![cfg(all(feature = "serve-engine", feature = "hnsw"))]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;
@@ -661,18 +665,46 @@ async fn runapp_connection_live(case: &ConnectorCase) {
     std::env::remove_var(case.fake_env);
 }
 
-/// D114 LIVE witness — the per-run HITL block→grant→fire proof over
-/// `RunApp(require_approval = true)` (the field this PR adds to the wire). Mirrors
-/// `runapp_connection_live`'s setup, but runs the App under the per-run approval posture:
-/// an MCP connector tool is world-mutating (registered `Staged` by kx-mcp-gateway), so the
-/// coordinator's approval barrier HOLDS the model's tool call staged-not-committed — a
-/// `PendingApproval` surfaces and NO tool fires — until an operator GRANTS it, after which
-/// the granted tool fires and the chain resumes. The deterministic gate coverage lives in
-/// `kx-coordinator` (`approval_gate_requests_then_grants_then_proceeds_recovery_stable`);
-/// this is the live end-to-end proof that the RunAppRequest field reaches the gate on a
-/// real model. Dual-engine (llama.cpp + Ollama); reuses a `require_fire` connector case
-/// (proven to fire on BOTH engines) so the only new variable is the approval hold.
-async fn runapp_hitl_block_grant_fire_live(case: &ConnectorCase) {
+/// The operator's decision at the approval barrier — the ONE variable between the two
+/// live HITL arms. Both arms run this same function; nothing else differs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Verdict {
+    Grant,
+    Deny,
+}
+
+impl Verdict {
+    fn label(self) -> &'static str {
+        match self {
+            Verdict::Grant => "GRANT",
+            Verdict::Deny => "DENY",
+        }
+    }
+}
+
+/// D114 LIVE witness — the per-run HITL proof over `RunApp(require_approval = true)`.
+/// Mirrors `runapp_connection_live`'s setup, but runs the App under the per-run approval
+/// posture: an MCP connector tool is world-mutating (registered `Staged` by
+/// kx-mcp-gateway), so the coordinator's approval barrier HOLDS the model's tool call
+/// staged-not-committed — a `PendingApproval` surfaces and NO tool fires — until an
+/// operator decides.
+///
+/// ## The two arms, and why they are one function
+/// `verdict` is the **only** variable. Under [`Verdict::Grant`] the granted tool fires and
+/// the chain resumes; under [`Verdict::Deny`] the withheld action must NEVER happen and the
+/// chain must dead-letter. A negative arm passes on any failure at all — including the
+/// feature being switched off — so it is worthless without a one-variable ACCEPTING
+/// control, and the grant arm is exactly that: same connector, same prompt, same envelope,
+/// same barrier, one different RPC. Splitting them into two functions would let the arms
+/// drift apart silently, which is how a refusal oracle stops proving a refusal.
+///
+/// The deterministic gate coverage lives in `kx-coordinator`
+/// (`approval_gate_requests_then_grants_then_proceeds_recovery_stable` and
+/// `approval_gate_deny_dead_letters`); this is the live end-to-end proof that the
+/// `RunAppRequest` field reaches the gate on a real model. Dual-engine (llama.cpp +
+/// Ollama); reuses a `require_fire` connector case (proven to fire on BOTH engines) so the
+/// approval posture is the only thing under test.
+async fn runapp_hitl_live(case: &ConnectorCase, verdict: Verdict) {
     let Some(engine) = resolve_engine() else {
         eprintln!(
             "skipping: no serve model — set KX_SERVE_MODEL_GGUF (Gemma-4/Qwen3) or \
@@ -832,21 +864,66 @@ async fn runapp_hitl_block_grant_fire_live(case: &ConnectorCase) {
         pending.request_id.len()
     );
 
-    // PHASE 2 — GRANT (the operator decision).
-    let granted = c
-        .grant_approval(proto::GrantApprovalRequest {
-            request_id: pending.request_id.clone(),
-            reason: "live HITL witness: operator approves".to_string(),
-        })
-        .await
-        .expect("GrantApproval")
-        .into_inner();
+    // PHASE 2 — THE OPERATOR DECISION. This is the only line that differs between the
+    // two arms.
+    match verdict {
+        Verdict::Grant => {
+            let granted = c
+                .grant_approval(proto::GrantApprovalRequest {
+                    request_id: pending.request_id.clone(),
+                    reason: "live HITL witness: operator approves".to_string(),
+                })
+                .await
+                .expect("GrantApproval")
+                .into_inner();
+            assert!(
+                granted.granted,
+                "the grant resolves the pending request [{engine}]"
+            );
+        }
+        Verdict::Deny => {
+            let denied = c
+                .deny_approval(proto::DenyApprovalRequest {
+                    request_id: pending.request_id.clone(),
+                    reason: "live HITL witness: operator withholds".to_string(),
+                })
+                .await
+                .expect("DenyApproval")
+                .into_inner();
+            assert!(
+                denied.denied,
+                "the denial resolves the pending request [{engine}]"
+            );
+        }
+    }
+
+    // Either decision RESOLVES the request: it must leave the pending inbox. A decision
+    // that answered `true` while leaving the request pending would satisfy the phase-2
+    // assertion above and still leave the barrier holding.
+    let mut left_inbox = false;
+    for _ in 0..100 {
+        let inbox = c
+            .list_pending_approvals(proto::ListPendingApprovalsRequest { limit: 0 })
+            .await
+            .unwrap()
+            .into_inner();
+        if !inbox
+            .approvals
+            .iter()
+            .any(|p| p.request_id == pending.request_id)
+        {
+            left_inbox = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     assert!(
-        granted.granted,
-        "the grant resolves the pending request [{engine}]"
+        left_inbox,
+        "a decided ({}) request leaves the pending inbox [{engine}]",
+        verdict.label()
     );
 
-    // PHASE 3 — FIRE. After the grant the granted tool fires and the chain settles.
+    // PHASE 3 — THE OUTCOME. Grant ⇒ the granted tool fires. Deny ⇒ it never does.
     let mut tool_fired = false;
     let mut fired_tool_ids: Vec<String> = Vec::new();
     let mut answered = false;
@@ -871,35 +948,64 @@ async fn runapp_hitl_block_grant_fire_live(case: &ConnectorCase) {
         }
         answered = turns.turns.iter().any(|t| t.branch == "answer");
         dead_lettered = turns.turns.iter().any(|t| t.branch == "dead_lettered");
-        if tool_fired && (answered || dead_lettered) {
+        let settled = match verdict {
+            // The grant arm is done once the tool fired AND the chain settled.
+            Verdict::Grant => tool_fired && (answered || dead_lettered),
+            // The deny arm is done once the chain reaches a terminal. It must NOT wait
+            // for a fire — waiting for the thing that must never happen would mean the
+            // arm only ever ends by timeout, and a timeout is not a refusal.
+            Verdict::Deny => answered || dead_lettered,
+        };
+        if settled {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     eprintln!(
-        "LIVE HITL {} [{engine}]: GRANTED -> FIRED — tool_fired={tool_fired} fired_tools={fired_tool_ids:?} \
+        "LIVE HITL {} [{engine}]: {} -> tool_fired={tool_fired} fired_tools={fired_tool_ids:?} \
          answered={answered} dead_lettered={dead_lettered}",
-        case.server_name
-    );
-    assert!(
-        tool_fired && fired_tool_ids.iter().any(|id| id == case.granted_tool),
-        "after the grant, the {} App must FIRE {} on the live model [{engine}] — \
-         tool_fired={tool_fired} fired={fired_tool_ids:?}",
         case.server_name,
-        case.granted_tool
+        verdict.label()
     );
+
+    match verdict {
+        Verdict::Grant => assert!(
+            tool_fired && fired_tool_ids.iter().any(|id| id == case.granted_tool),
+            "after the GRANT, the {} App must FIRE {} on the live model [{engine}] — \
+             tool_fired={tool_fired} fired={fired_tool_ids:?}",
+            case.server_name,
+            case.granted_tool
+        ),
+        Verdict::Deny => {
+            // THE NEGATIVE HALF, and the whole point of the arm: the world-mutating call
+            // the model asked for must NEVER have happened.
+            assert!(
+                !tool_fired,
+                "after the DENY, the withheld {} call must NEVER fire on the live model \
+                 [{engine}] — but these tools fired: {fired_tool_ids:?}",
+                case.granted_tool
+            );
+            // …and the chain must not quietly answer as though the tool had run. A denied
+            // world-mutating call is fail-closed: the gate dead-letters
+            // (`kx-coordinator::approval_gate_deny_dead_letters`).
+            assert!(
+                dead_lettered,
+                "after the DENY, the chain must dead-letter fail-closed [{engine}] — \
+                 answered={answered} dead_lettered={dead_lettered}. An answer with no tool \
+                 call would mean the model was allowed to invent the result it was refused."
+            );
+        }
+    }
 
     running.shutdown().await.unwrap();
     std::env::remove_var("KX_SERVE_AUTOGRANT");
     std::env::remove_var(case.fake_env);
 }
 
-/// D114 block→grant→fire LIVE witness over Slack (a `require_fire` case, proven to fire on
-/// BOTH engines). Under `require_approval` the fire is HELD until the operator grants.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "real in-process LLM inference + the built kx-connector-slack; opt in with --ignored"]
-async fn runapp_hitl_block_grant_fire_slack_live() {
-    runapp_hitl_block_grant_fire_live(&ConnectorCase {
+/// The Slack HITL case — a `require_fire` connector proven to fire on BOTH engines, so the
+/// approval posture is the only thing the two arms below are testing.
+fn slack_hitl_case() -> ConnectorCase {
+    ConnectorCase {
         server_name: "slack",
         bin_name: "kx-connector-slack",
         credential_ref: "KX_SLACK_CREDENTIAL",
@@ -910,8 +1016,33 @@ async fn runapp_hitl_block_grant_fire_slack_live() {
                  slack/read_channel tool, then briefly summarize them.",
         require_fire: true,
         require_answer: false,
-    })
-    .await;
+    }
+}
+
+/// D114 block→grant→fire LIVE witness over Slack. Under `require_approval` the fire is HELD
+/// until the operator grants.
+///
+/// This is also the one-variable ACCEPTING CONTROL for
+/// [`runapp_hitl_block_deny_never_fires_slack_live`]: identical case, identical driver, one
+/// different operator RPC.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-slack; opt in with --ignored"]
+async fn runapp_hitl_block_grant_fire_slack_live() {
+    runapp_hitl_live(&slack_hitl_case(), Verdict::Grant).await;
+}
+
+/// D114 block→DENY→never-fire LIVE witness over Slack — the WITHHELD half, which nothing
+/// drove live before. The model asks for a world-mutating connector call, the barrier holds
+/// it staged-not-committed, the operator REFUSES, and the call must never happen.
+///
+/// A negative arm passes on any failure at all, so this one is meaningless alone: read it
+/// beside [`runapp_hitl_block_grant_fire_slack_live`], which differs by exactly one RPC and
+/// asserts the tool DOES fire. If the deny arm ever passes while the grant arm fails, the
+/// refusal is proving nothing — the tool simply stopped firing.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-slack; opt in with --ignored"]
+async fn runapp_hitl_block_deny_never_fires_slack_live() {
+    runapp_hitl_live(&slack_hitl_case(), Verdict::Deny).await;
 }
 
 /// D114 block→grant→fire LIVE witness over Notion (the other `require_fire` case) — a second
@@ -919,18 +1050,21 @@ async fn runapp_hitl_block_grant_fire_slack_live() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference + the built kx-connector-notion; opt in with --ignored"]
 async fn runapp_hitl_block_grant_fire_notion_live() {
-    runapp_hitl_block_grant_fire_live(&ConnectorCase {
-        server_name: "notion",
-        bin_name: "kx-connector-notion",
-        credential_ref: "KX_NOTION_CREDENTIAL",
-        credential_value: r#"{"token":"x"}"#,
-        fake_env: "KX_NOTION_FAKE",
-        granted_tool: "notion/search",
-        prompt: "Search the Notion workspace for pages about the launch using the \
-                 notion/search tool, then briefly summarize what you found.",
-        require_fire: true,
-        require_answer: false,
-    })
+    runapp_hitl_live(
+        &ConnectorCase {
+            server_name: "notion",
+            bin_name: "kx-connector-notion",
+            credential_ref: "KX_NOTION_CREDENTIAL",
+            credential_value: r#"{"token":"x"}"#,
+            fake_env: "KX_NOTION_FAKE",
+            granted_tool: "notion/search",
+            prompt: "Search the Notion workspace for pages about the launch using the \
+                     notion/search tool, then briefly summarize what you found.",
+            require_fire: true,
+            require_answer: false,
+        },
+        Verdict::Grant,
+    )
     .await;
 }
 
@@ -1334,12 +1468,12 @@ fn grounded_app_envelope_ex(
 /// declares a dataset + a rule (NO hand-authored tool grant) SELF-GROUNDS at RunApp — the
 /// dataset rail folds `retrieve@1` onto the entry step + steers it, and the rule rides the
 /// entry context. Runs the agentic loop on a REAL model over BOTH engines (Gemma, restart
-/// per engine). Needs `--features inference,hnsw` + an embedder; runtime-skips otherwise.
+/// per engine). Needs `--features serve-engine,hnsw` + an embedder; runtime-skips otherwise.
 /// Asserts only ROBUST invariants (settles to a terminal; if a tool fired it was `retrieve`
 /// —) and LOGS the trajectory; the deterministic fold/inject proofs live in the
 /// `app_run` unit tests + the `grounded` golden case.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "real LLM inference + dataset embedding; needs a served Gemma + --features inference,hnsw; opt in with --ignored"]
+#[ignore = "real LLM inference + dataset embedding; needs a served Gemma + --features serve-engine,hnsw; opt in with --ignored"]
 async fn runapp_grounded_app_self_grounds_live() {
     let Some(engine) = resolve_engine() else {
         eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");
@@ -1353,7 +1487,7 @@ async fn runapp_grounded_app_self_grounds_live() {
 
     // Ingest a tiny paraphrase corpus (server-embed). The target doc never says
     // "photosynthesis" — only the agent's own retrieve query surfaces it. Skip if the
-    // dataset view/embedder is absent (a `--features inference` build without `hnsw`).
+    // dataset view/embedder is absent (a `--features serve-engine` build without `hnsw`).
     let ingest = c
         .ingest_documents(proto::IngestDocumentsRequest {
             dataset: "science".to_string(),
@@ -1484,7 +1618,7 @@ async fn runapp_grounded_app_self_grounds_live() {
 /// would answer confidently UNGROUNDED, and an answer-only assertion would pass anyway.
 /// The agentic leg keeps the sibling's robust invariants (settles; only retrieve fires).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "real LLM inference + dataset embedding; needs a served Gemma + --features inference,hnsw; opt in with --ignored"]
+#[ignore = "real LLM inference + dataset embedding; needs a served Gemma + --features serve-engine,hnsw; opt in with --ignored"]
 async fn runapp_self_contained_app_ingests_its_carried_corpus_live() {
     let Some(engine) = resolve_engine() else {
         eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");

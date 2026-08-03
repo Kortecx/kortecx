@@ -10,11 +10,15 @@
 //! auth gate) is pinned model-free in `react_auto_bind.rs`; this proves the SERVE
 //! wiring under the flag (recipe provisioning, the form, the live drive).
 //!
-//! Gated `#[cfg(feature = "inference")]` AND `#[ignore]`; runtime-skips without a
+//! Gated `#[cfg(feature = "serve-engine")]` — deliberately NOT `inference`. `inference =
+//! ["serve-engine", ...]` is one-directional, so an `inference`-gated file compiles to
+//! an EMPTY harness under `console,serve-engine,hnsw,hosted-apps,observability`, the
+//! exact set the live proofs build. Gated this way it runs on BOTH builds and picks
+//! its engine at runtime.
 //! `GGUF` (`just fetch-agent-model` or `KX_SERVE_MODEL_GGUF`) or the bundled
 //! `kx-mcp-echo` bin (`cargo build -p kx-mcp`, or `KX_MCP_ECHO_PATH`).
 
-#![cfg(feature = "inference")]
+#![cfg(feature = "serve-engine")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;

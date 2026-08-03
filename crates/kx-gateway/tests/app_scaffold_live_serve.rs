@@ -4,13 +4,17 @@
 //! branch with non-empty model-authored bodies (the host is never written), then prove the
 //! POC-5b lock: a locked App refuses a further agentic in-CAS edit.
 //!
-//! Gated `#[cfg(feature = "inference")]` AND `#[ignore]`; runtime-skips without a
+//! Gated `#[cfg(feature = "serve-engine")]` — deliberately NOT `inference`. `inference =
+//! ["serve-engine", ...]` is one-directional, so an `inference`-gated file compiles to
+//! an EMPTY harness under `console,serve-engine,hnsw,hosted-apps,observability`, the
+//! exact set the live proofs build. Gated this way it runs on BOTH builds and picks
+//! its engine at runtime.
 //! GGUF. **Drive on Gemma-4 locally** (the deep-test model, — never Qwen3 for a
 //! real scaffold; a small model authors degenerate file bodies):
 //! `KX_SERVE_MODEL_GGUF=target/models/gemma-4-12b-it-q4_k_m.gguf \`
 //! `  cargo test -p kx-gateway --features inference,hnsw --test app_scaffold_live_serve -- --ignored --nocapture`
 
-#![cfg(feature = "inference")]
+#![cfg(feature = "serve-engine")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;

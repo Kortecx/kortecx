@@ -3,7 +3,7 @@
 //! `kx_gateway::eval_bench` — the proof that the runtime's agentic quality is MEASURED on
 //! real model output, not replayed from scripted fixtures.
 //!
-//! This is the hard-but-LOCAL gate. It is `#[ignore]` + `--features inference` and NEVER
+//! This is the hard-but-LOCAL gate. It is `#[ignore]` + `--features serve-engine,hnsw` and NEVER
 //! runs in `just ci` (the deterministic golden gate is `just eval`, flake-proof over
 //! fixtures). The oracle FLOORS are asserted only when a CAPABLE model is served
 //! (Gemma-4-12B — Ollama `gemma3:12b` or a Gemma GGUF); on the weak Qwen3 CI stand-in the
@@ -23,7 +23,7 @@
 //! asserted so a trial can never silently be a replay (see `tests/run_identity.rs`
 //! for the model-free proof of that detector).
 
-#![cfg(feature = "inference")]
+#![cfg(all(feature = "serve-engine", feature = "hnsw"))]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;
