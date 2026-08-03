@@ -17,9 +17,9 @@
 
 use std::collections::BTreeMap;
 
-use kx_gateway_core::ScaffoldLane;
 #[cfg(test)]
 use kx_gateway_core::MANIFEST_MARKER_PATH;
+use kx_gateway_core::{hosted_framework_runtime_rules, ScaffoldLane};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -178,10 +178,15 @@ NOT plan a `.kortecx/` path (reserved); do NOT re-plan any of the seven provided
 /// committed answer is decoded fail-closed by [`decode_manifest`].
 pub(crate) fn manifest_plan_directive(goal: &str, lane: ScaffoldLane<'_>) -> String {
     match lane {
+        // The framework's RUNTIME rules ride BOTH prompts from one definition — here (which
+        // file set to plan) and `authoring_prompt` (what goes IN each file). A contract that
+        // reached only the planner would constrain which files exist and nothing about their
+        // contents, which is where every defect it exists to prevent actually lives.
         ScaffoldLane::Hosted(f) => format!(
-            "{MANIFEST_PLAN_SYSTEM}\n\n{}\n\nApp goal: {}",
-            framework_contract(f),
-            goal.trim()
+            "{MANIFEST_PLAN_SYSTEM}\n\n{contract}\n\n{rules}\n\nApp goal: {goal}",
+            contract = framework_contract(f),
+            rules = hosted_framework_runtime_rules(f),
+            goal = goal.trim()
         ),
         ScaffoldLane::Contextual => format!("{AGENTIC_PLAN_SYSTEM}\n\nApp goal: {}", goal.trim()),
         ScaffoldLane::Codified => format!("{CODIFIED_PLAN_SYSTEM}\n\nApp goal: {}", goal.trim()),
@@ -847,6 +852,28 @@ components from ./components/\"},\
         assert!(
             manifest_plan_directive("x", ScaffoldLane::Hosted("svelte")).contains("src/App.svelte")
         );
+    }
+
+    /// The plan directive carries the framework's RUNTIME rules from the SAME definition the
+    /// per-file authoring prompt uses. Two prompts, one source: a contract that reached only
+    /// one of them would constrain the file set or the file contents but never both, and the
+    /// version / styling / egress mistakes it exists to prevent are made in both places.
+    #[test]
+    fn the_hosted_directive_carries_the_shared_runtime_rules() {
+        for fw in ["vite_react", "next_js", "svelte"] {
+            let d = manifest_plan_directive("a landing page", ScaffoldLane::Hosted(fw));
+            let rules = hosted_framework_runtime_rules(fw);
+            assert!(
+                d.contains(&rules),
+                "{fw}: the plan directive does not carry the runtime rules verbatim"
+            );
+            // The negative dependency clause is still there — the rules ADD a positive
+            // instruction beside it rather than replacing it.
+            assert!(d.contains("no other npm dependencies"), "{fw}");
+        }
+        // The scheduled lanes never see them: no bundler, no stylesheet, no npm.
+        assert!(!manifest_plan_directive("x", ScaffoldLane::Contextual).contains("LOOPBACK-ONLY"));
+        assert!(!manifest_plan_directive("x", ScaffoldLane::Codified).contains("LOOPBACK-ONLY"));
     }
 
     /// The SCHEDULED lane gets a genuinely different contract, not the web one with a

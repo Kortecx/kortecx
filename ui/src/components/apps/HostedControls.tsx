@@ -91,12 +91,23 @@ export function HostedRunButton({
   if (disabled) {
     return (
       <span
-        className="iconbtn iconbtn--disabled"
+        className="affordance-off"
         aria-disabled="true"
         title="Hosted apps aren't available on this gateway (serve with the hosted-apps feature)"
         data-testid={`${PREFIX[variant]}-run-${handle}`}
       >
-        <Icon name="external-link" size={size} />
+        <Icon name="external-link" size={size} aria-hidden="true" />
+        {/* The reason is TEXT, not a `title`. A greyed icon whose only explanation needs a
+         * hover reads as ABSENCE — "there is no start button" — and that misreading cost a
+         * full diagnosis. A tooltip requires a pointing device, a hover, a delay, and the
+         * idea that hovering would help; none of that is available to someone scanning a
+         * card, and none of it is announced. */}
+        <span
+          className="affordance-off__why"
+          data-testid={`${PREFIX[variant]}-run-reason-${handle}`}
+        >
+          Hosted apps unavailable
+        </span>
       </span>
     );
   }

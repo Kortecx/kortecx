@@ -6,6 +6,31 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **A scaffolded web app is now written against the version it actually installs, and
+  styled with a stylesheet it actually has.** The instructions the runtime gives a model
+  when it scaffolds a hosted app previously named the framework and listed the packages it
+  must not add. They now also state the framework's major version, show the stylesheet
+  import, say positively where styling belongs, and state that a hosted app runs with
+  loopback-only network access — so nothing is fetched from the internet at build or run
+  time. Generated pages had been reaching for a web-font API the sandbox refuses and for
+  utility CSS classes the project never installs; both produce an app that starts and
+  passes every check while rendering wrong. The runtime additionally guarantees the
+  stylesheet and the test the instructions ask for: if the plan omits either, it is added
+  rather than silently skipped. No action needed — scaffold an app and the generated code
+  follows the new rules.
+
+- **A control the server cannot offer now says so on the page.** Where a capability is
+  unavailable — starting a hosted app on a server built without hosted-app support, for
+  instance — the greyed control now carries a short reason beside it instead of only in a
+  tooltip. A greyed icon with no visible explanation reads as a missing feature rather
+  than a switched-off one.
+
+- **Status colour now means something.** Run states, tool risk classes and notices share
+  one set of semantic colours (success, warning, danger, information) in both light and
+  dark themes, instead of seven shades of grey. Colour is never the only signal — each
+  state still carries its own icon and label — and every pairing meets the same contrast
+  bar the console already held itself to.
+
 - **A refused agent turn now shows the model output it was refused on.**
   `ReactTurnSummary` gains `raw` — the model output a turn was settled from, present
   when the turn was rejected and capped by the server. `kx react list` shows it: the
