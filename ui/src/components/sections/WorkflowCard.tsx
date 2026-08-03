@@ -88,12 +88,15 @@ export function WorkflowCard({
             testId={`workflow-schedule-${handle}`}
           />
           <span
-            className="iconbtn iconbtn--disabled"
+            className="affordance-off"
             data-testid={`workflow-share-${handle}`}
             aria-disabled="true"
-            title="Sharing across parties is a Cloud capability"
+            title="Sharing a workflow across parties is a Cloud capability"
           >
-            <Icon name="share" size={16} />
+            <Icon name="share" size={16} aria-hidden="true" />
+            <span className="affordance-off__why" data-testid={`workflow-share-reason-${handle}`}>
+              Sharing unavailable
+            </span>
           </span>
           <Popover
             trigger={<Icon name="menu" size={16} />}

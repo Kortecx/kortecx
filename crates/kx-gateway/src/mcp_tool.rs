@@ -323,9 +323,12 @@ pub(crate) fn autogrant_enabled() -> bool {
 /// RC2: the operator SERVE-LEVEL kill-switch for grammar-constrained tool-calling
 /// (`KX_SERVE_REACT_GRAMMAR`). Default-ON (unset / `"1"` / `"true"` ⇒ `true`) — the
 /// always-on posture; set to `"0"` / `"false"` to disable grammar derivation for
-/// every dispatch (the reliable global opt-out). A per-run / per-mote opt-out rides
-/// `config_subset[REACT_UNCONSTRAINED_KEY]` (the SDK `.unconstrained()`); full
-/// per-turn propagation across a chain is a ticketed follow-on (T-GRAMMAR-PERRUN-OPTOUT).
+/// every dispatch (the reliable global opt-out). A per-mote opt-out rides
+/// `config_subset[REACT_UNCONSTRAINED_KEY]`, settable only when authoring the Mote —
+/// ⚠ the SDK `.unconstrained()` this comment used to cite **does not exist** in any
+/// binding, the CLI or the console, so no shipped client can opt out per request.
+/// Full per-turn propagation across a chain is a ticketed follow-on
+/// (T-GRAMMAR-PERRUN-OPTOUT).
 pub(crate) fn grammar_constrained_enabled() -> bool {
     match std::env::var_os("KX_SERVE_REACT_GRAMMAR") {
         Some(v) => {

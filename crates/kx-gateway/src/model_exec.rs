@@ -430,11 +430,7 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
     let embed_model = resolve_embed_model(&primary, &entries);
     // RC4a (T-RAG-EMBED-QUALITY): flag the embed entry, and whether the configured
     // embedder is a generative DECODER (weak sentence embeddings) vs a dedicated one.
-    let embed_is_decoder = !is_dedicated_embedder(&embed_model.0);
-    for entry in &mut entries {
-        entry.can_embed = entry.model_id == embed_model.0;
-        entry.embed_is_decoder = entry.can_embed && embed_is_decoder;
-    }
+    flag_embed_entries(&mut entries, &embed_model);
     Some(ServeRuntime {
         routing: Arc::new(RoutingBackend::new(engines)),
         entries,
@@ -444,6 +440,31 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
         #[cfg(feature = "inference")]
         llama_registry,
     })
+}
+
+/// Mark which catalog entry IS the embedder, and whether that embedder is a
+/// generative decoder rather than a dedicated embedding model.
+///
+/// Extracted from `build_serve_runtime` so it can be tested at all. It decides what
+/// `ListModels`, `GetServerInfo` and `kx info` report about embedding, and it had no
+/// test: every other site that names these two fields is a struct literal setting
+/// them `false`. A loop that flagged every entry, or none, would have produced a
+/// catalog that misreports which model embeds — and the only reader that would have
+/// noticed is a person looking at the CLI output.
+///
+/// EXACTLY ONE entry may claim `can_embed`, and `embed_is_decoder` is meaningful
+/// only on that entry: it is a property of the RESOLVED embedder, not of every
+/// model in the catalog.
+fn flag_embed_entries(entries: &mut [kx_gateway_core::ModelSummaryEntry], embed_model: &ModelId) {
+    // RC4a (T-RAG-EMBED-QUALITY): a generative decoder produces weak sentence
+    // embeddings. It is still USED — refusing here would remove retrieval entirely
+    // from every serve that has only a chat model, which is a working (if weak) path
+    // today. The flag is what makes the weakness visible instead of silent.
+    let is_decoder = !is_dedicated_embedder(&embed_model.0);
+    for entry in entries.iter_mut() {
+        entry.can_embed = entry.model_id == embed_model.0;
+        entry.embed_is_decoder = entry.can_embed && is_decoder;
+    }
 }
 
 /// Heuristic: does `model_id` name a DEDICATED embedding model (vs a generative
@@ -1752,8 +1773,18 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     }
 
     /// `true` iff this Mote opts OUT of RC2 grammar-constrained tool-calling via
-    /// `config_subset[REACT_UNCONSTRAINED_KEY] = true` (the SDK `.unconstrained()`
-    /// / CLI `--unconstrained` escape hatch). Absent ⇒ `false` ⇒ grammar is armed
+    /// `config_subset[REACT_UNCONSTRAINED_KEY] = true`.
+    ///
+    /// ⚠ This used to be documented as "the SDK `.unconstrained()` / CLI
+    /// `--unconstrained` escape hatch". **Neither exists** — there is no
+    /// `unconstrained` symbol in `bindings/`, `kx-cli` or the console. The opt-out
+    /// is real but reaches only as far as the Mote config: an authored Mote (or a
+    /// recipe that binds the slot) can set it. The serve-wide switch is
+    /// `KX_SERVE_REACT_GRAMMAR=0`. Documenting a client API that was never written
+    /// sends a reader looking for a flag they cannot find, and hides the fact that
+    /// per-request opt-out is unavailable to every shipped client.
+    ///
+    /// Absent ⇒ `false` ⇒ grammar is armed
     /// (the always-on default). The value is a canonical-JSON / raw boolean, so a
     /// recipe-bound `Bool` (`true`) and a directly-built `b"true"` both match.
     fn is_unconstrained(mote: &Mote) -> bool {
@@ -2630,6 +2661,85 @@ mod tests {
             resolve_embed_model_from(Some("embeddinggemma:latest"), &primary, &entries).0,
             "embeddinggemma:latest",
             "a served embed tag is used as given"
+        );
+    }
+
+    /// Does the resolved embedder actually ARRIVE on the catalog?
+    ///
+    /// `resolve_embed_model_from` decides WHICH model embeds; this loop is what makes
+    /// that decision visible to `ListModels`, `GetServerInfo` and `kx info`. It had no
+    /// test — every other site naming these fields is a struct literal setting them
+    /// `false` — so a loop flagging every entry, or none, would have shipped a catalog
+    /// that misreports which model embeds, with a human reading the CLI as the only
+    /// oracle.
+    #[test]
+    fn exactly_one_entry_claims_can_embed_and_only_it_carries_the_decoder_flag() {
+        let mut entries = vec![
+            served("gemma3:12b"),
+            served("embeddinggemma:latest"),
+            served("qwen3:0.6b"),
+        ];
+        flag_embed_entries(&mut entries, &ModelId("embeddinggemma:latest".to_string()));
+
+        let claiming: Vec<&str> = entries
+            .iter()
+            .filter(|e| e.can_embed)
+            .map(|e| e.model_id.as_str())
+            .collect();
+        assert_eq!(
+            claiming,
+            vec!["embeddinggemma:latest"],
+            "exactly the resolved embedder claims can_embed"
+        );
+        assert!(
+            entries.iter().all(|e| !e.embed_is_decoder),
+            "a DEDICATED embedder is not flagged as a decoder"
+        );
+    }
+
+    /// The one-variable contrast: same catalog, a decoder resolved as the embedder.
+    ///
+    /// Without this the assertion above is satisfied by a loop that never sets
+    /// `embed_is_decoder` at all — which is precisely the flag that tells an operator
+    /// their retrieval is running on weak sentence embeddings.
+    #[test]
+    fn a_decoder_pressed_into_service_as_the_embedder_is_flagged_on_that_entry_only() {
+        let mut entries = vec![served("gemma3:12b"), served("embeddinggemma:latest")];
+        flag_embed_entries(&mut entries, &ModelId("gemma3:12b".to_string()));
+
+        let flagged: Vec<&str> = entries
+            .iter()
+            .filter(|e| e.embed_is_decoder)
+            .map(|e| e.model_id.as_str())
+            .collect();
+        assert_eq!(
+            flagged,
+            vec!["gemma3:12b"],
+            "the decoder flag rides the RESOLVED embedder, not every entry — it is a \
+             property of the choice, not of the catalog"
+        );
+        // …and the dedicated embedder present in the catalog does NOT claim to embed,
+        // because the operator's configuration did not select it.
+        assert!(
+            entries
+                .iter()
+                .find(|e| e.model_id == "embeddinggemma:latest")
+                .is_some_and(|e| !e.can_embed),
+            "a dedicated embedder that was not resolved must not claim can_embed"
+        );
+    }
+
+    /// An embedder resolved to a tag the catalog does not hold — the shape the
+    /// unserved-tag refusal above deliberately produces. NOTHING may claim to embed:
+    /// a catalog entry claiming `can_embed` here would tell Settings and `ListModels`
+    /// that embedding works, on a serve where it cannot.
+    #[test]
+    fn an_unserved_resolved_embedder_leaves_no_entry_claiming_can_embed() {
+        let mut entries = vec![served("gemma3:12b")];
+        flag_embed_entries(&mut entries, &ModelId("embeddinggemma:latest".to_string()));
+        assert!(
+            entries.iter().all(|e| !e.can_embed),
+            "no served model claims to be an embedder it is not"
         );
     }
 

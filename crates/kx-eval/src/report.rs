@@ -99,6 +99,26 @@ pub struct BaselineEnv {
     pub captured_unix_s: u64,
     /// The commit the capture ran at.
     pub git_sha: String,
+    /// The model that produced the EMBEDDINGS for this capture, which is not
+    /// necessarily `model`: with `KX_SERVE_EMBED_MODEL` unset the serve falls back to
+    /// the chat primary.
+    ///
+    /// ★ Recorded because its absence made a zero unattributable. The committed
+    /// llama.cpp baseline scores `groundedness` and `context_recall` at 0 while the
+    /// Ollama baseline scores both at 1000 — and the single most likely cause is that
+    /// one capture embedded with a dedicated embedder and the other with a chat
+    /// decoder. Nothing in the capture said which, so the question could not be
+    /// settled from the artefact; it had to be re-run. A benchmark that cannot see the
+    /// variable most likely to explain its own result is measuring with its eyes shut.
+    ///
+    /// Defaulted so the baselines committed before this field still parse.
+    #[serde(default)]
+    pub embed_model: String,
+    /// Whether that embedder is a generative DECODER pressed into service rather than a
+    /// dedicated embedding model — weak sentence embeddings, and the difference between
+    /// a retrieval family scoring and a retrieval family reading zero.
+    #[serde(default)]
+    pub embed_is_decoder: bool,
 }
 
 /// The committed yardstick — the suite's Gate values at a known corpus digest. Lives at
@@ -498,6 +518,8 @@ mod tests {
             task_count: 16,
             captured_unix_s: 1_753_500_000,
             git_sha: "abc123".into(),
+            embed_model: "embeddinggemma:latest".into(),
+            embed_is_decoder: false,
         });
         let round_tripped: Baseline =
             serde_json::from_str(&serde_json::to_string(&r.to_baseline()).unwrap()).unwrap();
@@ -509,6 +531,42 @@ mod tests {
             env.task_count, 16,
             "the denominator behind every family score"
         );
+        // The EMBEDDER travels too. Without it a retrieval family reading zero cannot be
+        // told apart from a retrieval family that embedded with a chat decoder — which
+        // is exactly the question the committed baselines cannot answer about themselves.
+        assert_eq!(env.embed_model, "embeddinggemma:latest");
+        assert!(!env.embed_is_decoder);
+    }
+
+    /// The embedder label is the one that distinguishes two otherwise identical
+    /// captures, so it must survive the round trip when it says the UNCOMFORTABLE
+    /// thing — a chat decoder pressed into service.
+    #[test]
+    fn the_embedder_label_survives_when_it_reports_a_decoder() {
+        let mut r = report();
+        r.env = Some(BaselineEnv {
+            engine: "llamacpp".into(),
+            model: "kx-serve:gemma-4-12b-it-q4_k_m".into(),
+            os: "macos".into(),
+            arch: "aarch64".into(),
+            cores: 8,
+            task_count: 46,
+            captured_unix_s: 1_785_486_367,
+            git_sha: "d9d4324".into(),
+            // The serve fell back to the chat primary: same model id in both fields.
+            embed_model: "kx-serve:gemma-4-12b-it-q4_k_m".into(),
+            embed_is_decoder: true,
+        });
+        let round_tripped: Baseline =
+            serde_json::from_str(&serde_json::to_string(&r.to_baseline()).unwrap()).unwrap();
+        let env = round_tripped.env.expect("the label reaches the file");
+        assert!(
+            env.embed_is_decoder,
+            "a capture that embedded with a decoder says so IN THE ARTEFACT — otherwise \
+             the zero it produces is unattributable after the fact, which is how \
+             groundedness/context_recall stayed an open question"
+        );
+        assert_eq!(env.embed_model, env.model, "the fallback-to-primary shape");
     }
 
     /// An already-committed baseline predates the label. It must still deserialize and

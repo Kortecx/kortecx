@@ -7,9 +7,9 @@
  * appears only where the wire enforces it (don't-fake-gaps, D142).
  */
 
-import { type ModelSummary, PERSONAS, personaNames } from "@kortecx/sdk/web";
+import type { ModelSummary } from "@kortecx/sdk/web";
 import { m } from "framer-motion";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useApps } from "../../kx/use-apps";
 import { useListMcpServers } from "../../kx/use-connections";
@@ -18,6 +18,7 @@ import { useListSkills } from "../../kx/use-skills";
 import { useDiscoverTools } from "../../kx/use-tool-registry";
 import { JsonEditor } from "../editor/JsonEditor";
 import { MonacoMount } from "../editor/MonacoMount";
+import { PersonaPicker } from "./PersonaPicker";
 import type { BuilderStep } from "./builder-graph";
 import { isJsonObject } from "./builder-graph";
 
@@ -71,6 +72,79 @@ const CAPABILITY_AXES = [
   hint: string;
   empty: React.ReactNode;
 }>;
+
+/**
+ * A toggle-in-place chip row with a filter for one capability axis.
+ *
+ * The filter appears only past {@link FILTER_THRESHOLD}, so a three-entry catalog
+ * is not given a search box it does not need. An account with a hundred tools gets
+ * one, which is the case a flat wrapping row stops serving.
+ *
+ * ⚠ The PICKED chips are always rendered, filter or not. Hiding a selection because
+ * it does not match the current filter is how an author loses track of what a step
+ * is already bound to — the filter narrows what you can ADD, never what you have.
+ */
+function AxisChips({
+  options,
+  picked,
+  label,
+  testId,
+  onToggle,
+}: {
+  readonly options: readonly string[];
+  readonly picked: readonly string[];
+  readonly label: (value: string) => string;
+  readonly testId: string;
+  readonly onToggle: (value: string, on: boolean) => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+  const pickedSet = new Set(picked);
+  const visible = options.filter(
+    (o) => pickedSet.has(o) || needle === "" || label(o).toLowerCase().includes(needle),
+  );
+
+  return (
+    <>
+      {options.length > FILTER_THRESHOLD ? (
+        <input
+          type="text"
+          className="builder-filter"
+          placeholder={`Filter ${options.length} options…`}
+          aria-label={`Filter ${testId}`}
+          data-testid={`${testId}-filter`}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      ) : null}
+      <div className="builder-chips" data-testid={testId}>
+        {visible.map((name) => {
+          const on = pickedSet.has(name);
+          return (
+            <button
+              key={name}
+              type="button"
+              className={`chip${on ? " chip--active" : ""}`}
+              aria-pressed={on}
+              data-testid={`${testId}-${name}`}
+              onClick={() => onToggle(name, on)}
+            >
+              {label(name)}
+            </button>
+          );
+        })}
+        {visible.length === 0 ? (
+          <span className="muted" data-testid={`${testId}-nomatch`}>
+            Nothing matches “{filter.trim()}”.
+          </span>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+/** Show a filter only past this many options — below it the row is scannable. */
+const FILTER_THRESHOLD = 8;
 
 /** The drawer's kind badge label + modifier (PURE / MODEL / TOOL). */
 function kindBadge(kind: BuilderStep["kind"]): { label: string; mod: string } {
@@ -232,39 +306,14 @@ export function StepConfigDrawer({
 
             <div className="builder-field">
               <span className="builder-field__label">Persona</span>
-              <div className="builder-chips" data-testid="step-config-persona">
-                {personaNames().map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    className="chip"
-                    data-testid={`step-config-persona-${name}`}
-                    onClick={() => {
-                      const role = PERSONAS[name] ?? "";
-                      // Strip a leading persona (any known role) first, so re-picking a
-                      // persona SWAPS the role rather than stacking it.
-                      let body = step.prompt;
-                      for (const known of Object.values(PERSONAS)) {
-                        if (body === known) {
-                          body = "";
-                          break;
-                        }
-                        if (body.startsWith(`${known}\n\n`)) {
-                          body = body.slice(known.length + 2);
-                          break;
-                        }
-                      }
-                      body = body.trim();
-                      onChange({ ...step, prompt: body ? `${role}\n\n${body}` : role });
-                    }}
-                  >
-                    {name}
-                  </button>
-                ))}
-              </div>
+              <PersonaPicker
+                prompt={step.prompt}
+                onChange={(prompt) => onChange({ ...step, prompt })}
+              />
               <span className="builder-field__hint">
-                A curated role. Clicking prepends its instructions to the instruction (an editable
-                template); the same as the SDK <code>kx.persona("…")</code>.
+                A curated role. Picking one prepends its instructions to the instruction (an
+                editable template); the same as the SDK <code>kx.persona("…")</code>. Pick the
+                applied persona again to remove it.
               </span>
             </div>
 
@@ -272,7 +321,7 @@ export function StepConfigDrawer({
               <span className="builder-field__label">Model</span>
               {modelsUnsupported || served.length === 0 ? (
                 <p className="muted" data-testid="step-config-no-models">
-                  No model is being served. Start <code>kx serve --features inference</code> with
+                  No model is being served. Start <code>kx serve --features inference</code> with{" "}
                   <code>KX_SERVE_MODEL_GGUF</code> to run agent steps.
                 </p>
               ) : (
@@ -367,30 +416,20 @@ export function StepConfigDrawer({
                           {axis.empty}
                         </p>
                       ) : (
-                        <div className="builder-chips" data-testid={`step-config-${axis.field}`}>
-                          {options.map((name) => {
-                            const on = picked.includes(name);
-                            return (
-                              <button
-                                key={name}
-                                type="button"
-                                className={`chip${on ? " chip--active" : ""}`}
-                                aria-pressed={on}
-                                data-testid={`step-config-${axis.field}-${name}`}
-                                onClick={() =>
-                                  onChange({
-                                    ...step,
-                                    [axis.field]: on
-                                      ? picked.filter((x) => x !== name)
-                                      : [...picked, name],
-                                  })
-                                }
-                              >
-                                {chipLabel(axis.field, name)}
-                              </button>
-                            );
-                          })}
-                        </div>
+                        <AxisChips
+                          options={options}
+                          picked={picked}
+                          label={(v) => chipLabel(axis.field, v)}
+                          testId={`step-config-${axis.field}`}
+                          onToggle={(name, on) =>
+                            onChange({
+                              ...step,
+                              [axis.field]: on
+                                ? picked.filter((x) => x !== name)
+                                : [...picked, name],
+                            })
+                          }
+                        />
                       )}
                       <span className="builder-field__hint">{axis.hint}</span>
                     </div>

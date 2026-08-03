@@ -325,7 +325,7 @@ kx-flags             = { path = "crates/kx-flags",             version = "0.1.0"
 # corpus, not the gitignored docs/benchmarks. Off the journal + identity path
 # + frozen trio (a measurement leaf, never a committed fact). Composes kx-profile's
 # Gate/Spike report + kx-toolcall's parser + kx-critic's deterministic checks.
-kx-eval              = { path = "crates/kx-eval",              version = "0.2.0" }
+kx-eval              = { path = "crates/kx-eval",              version = "0.3.0" }
 # The sandboxed script shim + its descriptor codec. The bundled binary is the BODY
 # the platform sandbox spawns when a registered script fires; it translates between
 # the executor's "print a content ref" body contract and a script's arbitrary stdout.

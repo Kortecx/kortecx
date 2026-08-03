@@ -1,15 +1,26 @@
 //! Ollama `format` JSON-Schema rendering of a [`crate::ToolEnvelopeSpec`].
 //!
 //! Ollama constrains the WHOLE response to a JSON Schema (it has no lazy /
-//! triggered mode — see `kx-ollama`'s honest-degrade). RC2 renders the envelope
-//! level: the `name` is an enum over the granted tool ids, `version`/`args` are
-//! structurally pinned. Per-tool argument TYPING is carried in the spec for the
-//! GBNF (llama.cpp) leg; Ollama keeps generic-object args in RC2 (the accept-side
-//! `validate_args` gate enforces the types identically on both engines).
+//! triggered mode — see `kx-ollama`'s honest-degrade). The envelope level is
+//! always pinned: `tool_call` carries a `name`, a `version` and `args`.
+//!
+//! **Per-tool argument TYPING reaches this leg too.** It did not used to: `args`
+//! was `{"type":"object"}` here while the GBNF leg rendered the declared
+//! parameters, so the same warrant constrained llama.cpp and did not constrain
+//! Ollama. The accept-side `validate_args` gate refuses a bad call on BOTH
+//! engines, so this was never a safety gap — but on Ollama the model had to emit
+//! the violation first and the turn was spent finding out. Typed args here mean
+//! the model cannot spend a turn that way.
+//!
+//! The two legs are deliberately at parity on what they do NOT constrain:
+//! numeric bounds and length caps stay with `validate_args` on both (a tight
+//! digit-range grammar is brittle for weak models — the same D108.2 rationale
+//! `gbnf::render_typed_args` records).
 
-use serde_json::{json, Value};
+use kx_tool_registry::{InputSchema, ParamType};
+use serde_json::{json, Map, Value};
 
-use crate::spec::ToolEnvelopeSpec;
+use crate::spec::{ToolEnvelopeSpec, ToolSpec};
 
 /// Render the spec to an Ollama `format` JSON Schema.
 pub(crate) fn render(spec: &ToolEnvelopeSpec) -> Value {
@@ -18,33 +29,125 @@ pub(crate) fn render(spec: &ToolEnvelopeSpec) -> Value {
         // never-broken fallback.
         return json!({ "type": "object" });
     }
-
-    // Distinct granted names, in the spec's canonical order (sorted by
-    // (name, version), so equal names are adjacent — dedup keeps order).
-    let mut names: Vec<Value> = Vec::with_capacity(spec.tools.len());
-    let mut last: Option<&str> = None;
-    for tool in &spec.tools {
-        if last != Some(tool.name.as_str()) {
-            names.push(Value::String(tool.name.clone()));
-            last = Some(tool.name.as_str());
-        }
+    let mut arms = tool_call_arms(spec);
+    if arms.len() == 1 {
+        // Either the untyped flat envelope, or a lone typed tool — one arm needs
+        // no alternation.
+        arms.remove(0)
+    } else {
+        json!({ "oneOf": arms })
     }
+}
 
+/// The tool-call arm(s) for this spec.
+///
+/// When NO tool declares a typed schema this is the single flat envelope the
+/// renderer has always produced — one `name` enum over the distinct granted ids,
+/// a free `version`, and generic-object `args`. That case must stay
+/// byte-identical: it is the case every caller already handled, and it is pinned
+/// by `an_untyped_spec_renders_the_flat_envelope_byte_for_byte`.
+///
+/// When ANY tool is typed the envelope splits into one arm per tool, because a
+/// single flat schema cannot say "these args go with THAT name" — exactly the
+/// reason the GBNF leg emits one `call{i}` alternative per tool. Splitting also
+/// pins `name` to `version` per arm, which the flat form could not: it let a
+/// model pair one tool's name with another's version. Untyped tools keep
+/// generic-object args in their own arm, so a mixed grant set works.
+fn tool_call_arms(spec: &ToolEnvelopeSpec) -> Vec<Value> {
+    if spec.tools.iter().all(|t| t.arg_schema.is_none()) {
+        // Distinct granted names, in the spec's canonical order (sorted by
+        // (name, version), so equal names are adjacent — dedup keeps order).
+        let mut names: Vec<Value> = Vec::with_capacity(spec.tools.len());
+        let mut last: Option<&str> = None;
+        for tool in &spec.tools {
+            if last != Some(tool.name.as_str()) {
+                names.push(Value::String(tool.name.clone()));
+                last = Some(tool.name.as_str());
+            }
+        }
+        return vec![envelope_arm(
+            &json!({ "type": "string", "enum": names }),
+            &json!({ "type": "string" }),
+            &json!({ "type": "object" }),
+        )];
+    }
+    spec.tools.iter().map(typed_arm).collect()
+}
+
+/// One tool's arm: `name` and `version` pinned to exactly this tool, `args`
+/// rendered from its declared schema (generic object when it declares none).
+fn typed_arm(tool: &ToolSpec) -> Value {
+    envelope_arm(
+        // A single-element `enum`, NOT `const`. Both express "exactly this
+        // value", but `enum` is already carried through the pinned
+        // json-schema→GBNF converter by the name enum above, and `const` is not
+        // — this is not the place to find out which keywords it supports.
+        &json!({ "type": "string", "enum": [tool.name.clone()] }),
+        &json!({ "type": "string", "enum": [tool.version.clone()] }),
+        &args_schema(tool.arg_schema.as_ref()),
+    )
+}
+
+/// The shared `{"tool_call": {name, version, args}}` envelope shape.
+fn envelope_arm(name: &Value, version: &Value, args: &Value) -> Value {
     json!({
         "type": "object",
         "properties": {
             "tool_call": {
                 "type": "object",
-                "properties": {
-                    "name": { "type": "string", "enum": names },
-                    "version": { "type": "string" },
-                    "args": { "type": "object" }
-                },
+                "properties": { "name": name, "version": version, "args": args },
                 "required": ["name", "version", "args"]
             }
         },
         "required": ["tool_call"]
     })
+}
+
+/// The `args` sub-schema for a declared [`InputSchema`] — the Ollama counterpart
+/// of `gbnf::render_typed_args`. `None` ⇒ the generic object.
+///
+/// Declared order is preserved (it is the tool's identity contract); JSON Schema
+/// is order-tolerant, so unlike the GBNF leg this imposes no key order on the
+/// model. `deny_unknown` becomes `additionalProperties: false`, which is what
+/// makes the schema closed — and it is also the predicate the gateway uses to
+/// decide a schema may be rendered at all.
+fn args_schema(schema: Option<&InputSchema>) -> Value {
+    let Some(schema) = schema else {
+        return json!({ "type": "object" });
+    };
+    let mut properties = Map::new();
+    let mut required: Vec<Value> = Vec::new();
+    for param in &schema.params {
+        properties.insert(param.name.clone(), value_schema(&param.ty));
+        if param.required {
+            required.push(Value::String(param.name.clone()));
+        }
+    }
+    let mut out = json!({ "type": "object", "properties": Value::Object(properties) });
+    if !required.is_empty() {
+        out["required"] = Value::Array(required);
+    }
+    if schema.deny_unknown {
+        out["additionalProperties"] = json!(false);
+    }
+    out
+}
+
+/// The JSON-Schema value for a declared [`ParamType`]. Mirrors
+/// `gbnf::value_fragment` arm for arm, including what it declines to constrain:
+/// bounds and length caps are `validate_args`'s job on both engines.
+fn value_schema(ty: &ParamType) -> Value {
+    match ty {
+        ParamType::Bool => json!({ "type": "boolean" }),
+        ParamType::Int { .. } => json!({ "type": "integer" }),
+        ParamType::Str { .. } | ParamType::Bytes { .. } => json!({ "type": "string" }),
+        // An empty allowed-set would render an unsatisfiable `enum: []`, making the
+        // whole turn undecodable. The GBNF leg degrades the same way, to `jstring`.
+        ParamType::Enum { allowed } if allowed.is_empty() => json!({ "type": "string" }),
+        ParamType::Enum { allowed } => {
+            json!({ "type": "string", "enum": allowed.iter().cloned().collect::<Vec<_>>() })
+        }
+    }
 }
 
 /// Render a NON-STRICT UNION Ollama `format` JSON Schema: a well-formed tool-call
@@ -64,12 +167,16 @@ pub(crate) fn render_union(spec: &ToolEnvelopeSpec) -> Value {
         // never-broken fallback (mirrors `render`).
         return json!({ "type": "object" });
     }
-    json!({
-        "oneOf": [
-            render(spec),
-            answer_arm()
-        ]
-    })
+    // The tool arms are SPLICED beside the answer arm, never nested as a
+    // `oneOf` inside this `oneOf`. For an untyped spec that is one arm and the
+    // result is byte-identical to before. For a typed spec it keeps the schema
+    // one level deep rather than betting on the converter's handling of nested
+    // alternation — and the arms stay mutually exclusive either way, since every
+    // tool arm requires `tool_call` and the answer arm is a closed object
+    // requiring `answer`.
+    let mut arms = tool_call_arms(spec);
+    arms.push(answer_arm());
+    json!({ "oneOf": arms })
 }
 
 /// Render an ANSWER-ONLY Ollama `format` JSON Schema: the closed `{"answer":"…"}`
@@ -155,6 +262,46 @@ mod tests {
         assert_eq!(arms[1]["properties"]["answer"]["type"], "string");
         assert_eq!(arms[1]["required"], json!(["answer"]));
         assert_eq!(arms[1]["additionalProperties"], json!(false));
+    }
+
+    /// RULE-53 PIN. A spec in which NO tool declares a typed schema must render
+    /// BYTE-IDENTICALLY to the pre-typed-args envelope. Typed args were added by
+    /// giving each tool its own arm; the danger of that change is not the typed
+    /// case (which is new and has its own tests) but the UNTYPED case, which every
+    /// caller already handled correctly and which must not move a byte.
+    ///
+    /// The expected value is written as a LITERAL rather than derived from the
+    /// renderer, so a refactor cannot quietly redefine what "identical" means.
+    #[test]
+    fn an_untyped_spec_renders_the_flat_envelope_byte_for_byte() {
+        let spec = ToolEnvelopeSpec::new(vec![
+            ToolSpec::new("notion/search", "1"),
+            ToolSpec::new("slack/read_channel", "2"),
+        ]);
+        assert_eq!(
+            render(&spec),
+            json!({
+                "type": "object",
+                "properties": {
+                    "tool_call": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "enum": ["notion/search", "slack/read_channel"] },
+                            "version": { "type": "string" },
+                            "args": { "type": "object" }
+                        },
+                        "required": ["name", "version", "args"]
+                    }
+                },
+                "required": ["tool_call"]
+            }),
+            "an untyped spec must render the RC2 flat envelope unchanged"
+        );
+        // …and the union must still be exactly TWO arms: that flat envelope + the answer.
+        let union = render_union(&spec);
+        let arms = union["oneOf"].as_array().expect("union ⇒ oneOf arms");
+        assert_eq!(arms.len(), 2, "an untyped union keeps its two-arm shape");
+        assert_eq!(arms[0], render(&spec));
     }
 
     #[test]

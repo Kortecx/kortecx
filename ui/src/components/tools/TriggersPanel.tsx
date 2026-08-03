@@ -272,7 +272,7 @@ export function TriggersPanel() {
                     <span
                       className="chip chip--static"
                       data-testid={`trigger-hitl-${t.name}`}
-                      title="Per-trigger HITL: irreversible actions await an operator grant (D114)"
+                      title="Irreversible actions from this trigger wait for someone to approve them"
                     >
                       <span className="chip__label">🛡 approval</span>
                     </span>
@@ -431,7 +431,7 @@ export function TriggersPanel() {
               data-testid="trigger-add-require-approval"
               aria-pressed={requireApproval}
               onClick={() => setRequireApproval((v) => !v)}
-              title="Withhold irreversible actions until an operator grant (D114) — recommended for unattended Apps"
+              title="Hold irreversible actions until someone approves them — recommended for Apps that run unattended"
             >
               <span className="chip__label">
                 {requireApproval ? "🛡 approval required" : "autonomous"}

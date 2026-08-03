@@ -205,6 +205,157 @@ fn ollama_format_enumerates_granted_names() {
     assert_eq!(required, &serde_json::json!(["name", "version", "args"]));
 }
 
+/// THE PARITY TEST. One fixture, both legs — the two renderers must constrain the
+/// SAME things.
+///
+/// This exists because they did not. The GBNF leg rendered the declared parameters
+/// while the Ollama leg emitted `"args": {"type":"object"}`, so an identical warrant
+/// constrained one engine and not the other. Nothing compared them, which is exactly
+/// how the disagreement survived: each leg had tests, and each leg passed its own.
+///
+/// What both legs deliberately leave to `validate_args` — numeric bounds and length
+/// caps — is asserted as ABSENT on both, so parity cannot drift in that direction
+/// either.
+#[test]
+fn both_legs_constrain_the_same_declared_params() {
+    let schema = InputSchema {
+        params: vec![
+            ParamSpec {
+                name: "op".into(),
+                ty: ParamType::Enum {
+                    allowed: ["add", "sub"].iter().map(|s| (*s).into()).collect(),
+                },
+                required: true,
+            },
+            ParamSpec {
+                name: "a".into(),
+                ty: ParamType::Int {
+                    min: Some(0),
+                    max: Some(9),
+                },
+                required: true,
+            },
+            ParamSpec {
+                name: "verbose".into(),
+                ty: ParamType::Bool,
+                required: false,
+            },
+        ],
+        deny_unknown: true,
+    };
+    let spec = ToolEnvelopeSpec::new(vec![ToolSpec::with_schema("calc/add", "1", schema)]);
+
+    // --- llama.cpp leg ---
+    let gbnf = spec.to_gbnf();
+    assert!(gbnf.contains("args0 ::="), "GBNF emits a typed args rule");
+
+    // --- Ollama leg ---
+    let args = &spec.to_ollama_format()["properties"]["tool_call"]["properties"]["args"];
+    assert_eq!(args["type"], "object");
+    assert_eq!(
+        args["properties"]["op"],
+        serde_json::json!({ "type": "string", "enum": ["add", "sub"] }),
+        "the enum's allowed values reach Ollama, not just the word \"enum\""
+    );
+    assert_eq!(
+        args["properties"]["a"],
+        serde_json::json!({"type":"integer"})
+    );
+    assert_eq!(
+        args["properties"]["verbose"],
+        serde_json::json!({"type":"boolean"})
+    );
+    assert_eq!(
+        args["required"],
+        serde_json::json!(["op", "a"]),
+        "only the REQUIRED params are required; declared order preserved"
+    );
+    assert_eq!(
+        args["additionalProperties"],
+        serde_json::json!(false),
+        "deny_unknown closes the object"
+    );
+
+    // --- what NEITHER leg constrains, asserted on both ---
+    assert!(
+        !gbnf.contains("[0-9]") || !gbnf.contains("minimum"),
+        "GBNF leaves the int bound to validate_args"
+    );
+    for absent in ["minimum", "maximum", "maxLength"] {
+        assert!(
+            args["properties"]["a"].get(absent).is_none()
+                && args["properties"]["op"].get(absent).is_none(),
+            "Ollama leaves {absent} to validate_args, same as the GBNF leg"
+        );
+    }
+}
+
+/// A typed spec splits into one arm PER TOOL, and each arm pins its own
+/// name/version pair. The flat envelope could not: it enumerated names and left
+/// `version` free, so a model could pair one tool's name with another's version.
+#[test]
+fn typed_arms_pin_each_name_to_its_own_version() {
+    let schema = InputSchema {
+        params: vec![ParamSpec {
+            name: "key".into(),
+            ty: ParamType::Str { max_len: 256 },
+            required: true,
+        }],
+        deny_unknown: true,
+    };
+    let spec = ToolEnvelopeSpec::new(vec![
+        ToolSpec::with_schema("kv/get", "2", schema),
+        ToolSpec::new("calc/add", "1"), // untyped: keeps generic-object args
+    ]);
+    let arms = spec.to_ollama_format();
+    let arms = arms["oneOf"]
+        .as_array()
+        .expect("typed spec ⇒ per-tool arms");
+    assert_eq!(arms.len(), 2, "one arm per granted tool");
+
+    let props = |i: usize| arms[i]["properties"]["tool_call"]["properties"].clone();
+    // Canonical order sorts calc/add before kv/get.
+    assert_eq!(props(0)["name"]["enum"], serde_json::json!(["calc/add"]));
+    assert_eq!(props(0)["version"]["enum"], serde_json::json!(["1"]));
+    assert_eq!(
+        props(0)["args"],
+        serde_json::json!({"type":"object"}),
+        "an untyped tool in a mixed set keeps generic-object args"
+    );
+    assert_eq!(props(1)["name"]["enum"], serde_json::json!(["kv/get"]));
+    assert_eq!(props(1)["version"]["enum"], serde_json::json!(["2"]));
+    assert_eq!(props(1)["args"]["properties"]["key"]["type"], "string");
+}
+
+/// The union splices the tool arms BESIDE the answer arm rather than nesting a
+/// `oneOf` inside a `oneOf`, and the arms stay mutually exclusive.
+#[test]
+fn a_typed_union_stays_one_level_deep_and_disjoint() {
+    let schema = InputSchema {
+        params: vec![ParamSpec {
+            name: "key".into(),
+            ty: ParamType::Str { max_len: 256 },
+            required: true,
+        }],
+        deny_unknown: true,
+    };
+    let spec = ToolEnvelopeSpec::new(vec![ToolSpec::with_schema("kv/get", "1", schema)]);
+    let union = spec.to_ollama_union_format();
+    let arms = union["oneOf"].as_array().expect("union ⇒ oneOf arms");
+    assert_eq!(arms.len(), 2, "one tool arm + the answer arm");
+    for arm in arms {
+        assert!(
+            arm.get("oneOf").is_none(),
+            "no nested alternation: {}",
+            serde_json::to_string(arm).unwrap()
+        );
+    }
+    // Disjoint by required key — `oneOf` matches exactly one arm.
+    assert_eq!(arms[0]["required"], serde_json::json!(["tool_call"]));
+    assert_eq!(arms[1]["required"], serde_json::json!(["answer"]));
+    assert_eq!(arms[1]["additionalProperties"], serde_json::json!(false));
+}
+
 /// The spec serializes to / from the opaque `Grammar.raw` carrier byte-faithfully.
 #[test]
 fn spec_round_trips_through_the_carrier() {
@@ -335,12 +486,16 @@ fn gbnf_ignores_answer_only() {
     );
 }
 
-/// **Characterising the typed-args path BEFORE it goes live on every dispatch.**
+/// **Characterising the typed-args path.**
 ///
-/// This path is implemented and had exactly one test, and `ToolSpec::with_schema` has no
-/// production caller — `build_tool_grammar` builds every live spec with `ToolSpec::new`.
-/// "Built, tested once, never invoked" is indistinguishable from "working" in a test suite,
-/// so the shapes a real registry actually produces are pinned here first.
+/// ⚠ This doc block used to say `ToolSpec::with_schema` "has no production caller —
+/// `build_tool_grammar` builds every live spec with `ToolSpec::new`". That was written
+/// describing the state BEFORE the change that added this very test, and it stopped being
+/// true in the same commit: `build_tool_grammar` calls `with_schema` for any tool whose
+/// schema is `deny_unknown`. Left uncorrected it invites the reader to treat every
+/// assertion below as characterising dead code.
+///
+/// The shapes a real registry produces are pinned here.
 ///
 /// The load-bearing case is ALL-OPTIONAL, because it is what a paginated tool declares:
 /// `fleet/page` has one optional `cursor`, and the roster call that failed live was a
