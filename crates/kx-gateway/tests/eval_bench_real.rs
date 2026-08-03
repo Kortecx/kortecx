@@ -193,6 +193,30 @@ async fn served_model_id(c: &mut KxGatewayClient<Channel>) -> Option<String> {
         .find(|m| !m.is_empty())
 }
 
+/// The model that actually produced this capture's EMBEDDINGS, and whether it is a
+/// generative decoder rather than a dedicated embedder.
+///
+/// Read from the serve's own catalog (`ListModels` flags exactly one entry
+/// `can_embed`) rather than from the environment the operator set: with
+/// `KX_SERVE_EMBED_MODEL` unset the serve silently falls back to the chat primary, so
+/// the variable does not say what happened and the catalog does.
+///
+/// ★ Why this is recorded at all: the committed llama.cpp baseline scores
+/// `groundedness` and `context_recall` at 0 while the Ollama one scores both at 1000,
+/// and nothing in either artefact says which model embedded — so the most likely
+/// explanation could not be checked without re-running the capture.
+async fn embedder_identity(c: &mut KxGatewayClient<Channel>) -> (String, bool) {
+    let Ok(models) = c.list_models(proto::ListModelsRequest {}).await else {
+        return (String::new(), false);
+    };
+    models
+        .into_inner()
+        .models
+        .into_iter()
+        .find(|m| m.can_embed)
+        .map_or((String::new(), false), |m| (m.model_id, m.embed_is_decoder))
+}
+
 /// One server-embed document (empty embedding ⇒ the host embeds `content`).
 fn doc(content: &[u8]) -> proto::IngestDocument {
     proto::IngestDocument {
@@ -1500,6 +1524,8 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // capable run that silently fell back to a weak model would be a false record).
     let served = served_model_id(&mut c).await.unwrap_or_default();
     eprintln!("eval-bench: served model_id = {served:?} (recorded engine = {engine:?})");
+    // Which model EMBEDDED, read from the serve's catalog while it is still up.
+    let (embed_model, embed_is_decoder) = embedder_identity(&mut c).await;
     if capable {
         assert!(
             served.to_ascii_lowercase().contains("gemma"),
@@ -1569,7 +1595,20 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
             .map(|d| d.as_secs())
             .unwrap_or(0),
         git_sha,
+        embed_model: embed_model.clone(),
+        embed_is_decoder,
     });
+    // Say it out loud too. A retrieval family reading zero beside a line naming a chat
+    // decoder as the embedder is a diagnosis; the same zero with nothing beside it is
+    // what has been carried as an open question for seven sessions.
+    eprintln!(
+        "eval-bench: embedder = {} (decoder: {embed_is_decoder})",
+        if embed_model.is_empty() {
+            "<none reported>"
+        } else {
+            embed_model.as_str()
+        }
+    );
 
     // The gates + the per-task oracle detail.
     eprintln!(

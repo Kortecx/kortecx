@@ -901,15 +901,13 @@ button:disabled {
 .iconbtn--static[data-locked="true"] {
   color: var(--fg);
 }
-/* An honest-disabled icon (a Cloud-only capability) — grayed, never clickable. */
-.iconbtn--disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.iconbtn--disabled:hover {
-  background: transparent;
-  color: var(--fg-muted);
-}
+/* `.iconbtn--disabled` was removed. It styled a greyed, never-clickable icon whose
+ * only explanation lived in a `title`, which reads as ABSENCE rather than as
+ * unavailability — the misreading that cost a full diagnosis on the hosted run
+ * control. Its two remaining users (App and workflow Share) now use
+ * `.affordance-off` below, which carries the reason as TEXT. The rule is deleted
+ * rather than deprecated so the pattern cannot be picked up again by copying a
+ * neighbour; `no-title-only-disabled-affordance.test.ts` keeps it gone. */
 
 /* A control that is UNAVAILABLE, carrying its reason as text rather than as a tooltip.
  * A greyed icon alone reads as absence — the operator concludes the feature does not
@@ -1110,9 +1108,15 @@ select {
 .metrics {
   margin-top: 0.75rem;
 }
+/* `auto-fit`, not `auto-fill`. `auto-fill` keeps every 130px track it can fit and
+   places a LONE card in the first one, so a single-tile grid stayed ~130px wide on
+   any screen and `.metric-card { overflow: hidden }` clipped its own text. The
+   Models page has two such single-tile grids (the Cloud tile and the disabled Pull
+   tile); `auto-fit` collapses the empty tracks so the card takes the width it has.
+   Multi-tile consumers behave identically under either keyword. */
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 0.6rem;
 }
 .metric-card {
@@ -1191,6 +1195,10 @@ select {
   font-size: 0.62rem;
   color: var(--text-3);
   margin-top: 0.1rem;
+  /* These subtitles carry env-var names — `KX_SERVE_ALLOW_MODEL_PULL=1` is one
+     unbreakable 28-character run. Without this it overflows a narrow card and the
+     card's `overflow: hidden` clips it rather than wrapping. */
+  overflow-wrap: anywhere;
 }
 .state-bar {
   display: flex;
@@ -1876,6 +1884,12 @@ select {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
+  /* A chat auto-titles from its first message, so this overflows routinely — measured
+     at 553px of text in a 446px box. An `<input>` hard-clips by default, which cut a
+     title mid-word ("…what is a durable execu") and read like a rendering bug rather
+     than a long name. Only visible with a model served: a model-less chat never gets
+     an auto-title, which is why four console sweeps did not see it. */
+  text-overflow: ellipsis;
 }
 .chat__name-input:hover {
   border-color: var(--border);
@@ -5022,6 +5036,27 @@ button.card-grid__title:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+}
+/* The narrowing input above a long chip row (personas, and any capability axis past
+   its threshold). A flat wrapping row is fine at ten entries and unusable at a
+   hundred; this is the smallest thing that fixes that without replacing chips with
+   a controlled <select>, which is a known e2e hazard in this tree. */
+.builder-filter {
+  width: 100%;
+  margin-bottom: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-1);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.builder-filter::placeholder {
+  color: var(--text-3);
+}
+.builder-chips-group {
+  display: flex;
+  flex-direction: column;
 }
 .builder-edge__route {
   font-weight: 600;

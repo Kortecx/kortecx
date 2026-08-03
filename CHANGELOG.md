@@ -6,6 +6,38 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Tool arguments are now constrained on the Ollama backend too, not just llama.cpp.** When a
+  registered tool declares typed parameters with a closed schema, the runtime already told the
+  llama.cpp backend exactly what shape the arguments had to take. Ollama was only told "the
+  arguments are an object", so a model could propose an argument the tool's schema forbids —
+  the call was still refused before anything ran, but the turn was spent finding that out. The
+  runtime now sends the declared parameters to Ollama as well: enum values, integer and boolean
+  types, which arguments are required, and whether unknown keys are allowed. A tool with no
+  declared schema is sent exactly as before.
+
+- **`kx info` and the Models view name the model that produces your embeddings**, and benchmark
+  captures record it. With no embedding model configured the runtime falls back to the chat
+  model, which produces much weaker results for retrieval — visible now, rather than only as a
+  low score later.
+
+### Fixed
+
+- **The console no longer shows internal tracking identifiers.** A few tooltips and one line of
+  body text on the Models page ended with codes like `(D114)` that mean nothing outside our own
+  notes. They now say what the thing does.
+
+- **Disabled Share controls explain themselves without a hover.** On App and workflow cards the
+  greyed Share icon offered its reason only as a tooltip, which reads as the feature being
+  missing rather than unavailable. The reason is now visible text beside the icon.
+
+- **Long text no longer gets clipped on the Models page or in a chat's title.** The two Models
+  side panels were pinned to a narrow column and cut their own text off; a chat named after a
+  long first message was truncated mid-word.
+
+- **The workflow step drawer gained a persona picker and search.** The persona row now shows
+  which persona is applied, lets you remove it by picking it again, and can be filtered. Long
+  tool, skill, integration and grounding lists can be filtered too.
+
 - **Offloading a model no longer disrupts live work without telling you.** `OffloadModel`
   destroys the model to free RAM, and it used to do that unconditionally — stopping a
   running app's model was one click, with no warning and no record of what it broke. The

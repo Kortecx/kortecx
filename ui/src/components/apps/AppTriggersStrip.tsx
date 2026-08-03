@@ -79,7 +79,7 @@ export function AppTriggersStrip({ handle }: { handle: string }) {
                 {t.requireApproval ? (
                   <span
                     className="chip chip--static"
-                    title="Per-trigger HITL: irreversible actions await an operator grant (D114)"
+                    title="Irreversible actions from this trigger wait for someone to approve them"
                   >
                     <span className="chip__label">🛡 approval</span>
                   </span>

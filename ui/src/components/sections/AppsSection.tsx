@@ -635,12 +635,23 @@ function AppCard({
               >
                 <Icon name={app.locked ? "lock" : "unlock"} size={16} />
               </span>
+              {/* The reason is TEXT, not a `title` — a greyed icon whose only
+               * explanation needs a hover reads as ABSENCE. Same pattern as the
+               * hosted run control. Note the testids: this span had NONE, so
+               * nothing could assert on it at all. */}
               <span
-                className="iconbtn iconbtn--disabled"
+                className="affordance-off"
                 aria-disabled="true"
-                title="Sharing across parties is a Cloud capability"
+                title="Sharing an App across parties is a Cloud capability"
+                data-testid={`app-share-${app.handle}`}
               >
-                <Icon name="share" size={16} />
+                <Icon name="share" size={16} aria-hidden="true" />
+                <span
+                  className="affordance-off__why"
+                  data-testid={`app-share-reason-${app.handle}`}
+                >
+                  Sharing unavailable
+                </span>
               </span>
               <button
                 type="button"

@@ -1,7 +1,7 @@
 import { KxClient } from "@kortecx/sdk/node";
 import { expect, test } from "@playwright/test";
 import { connectConsole, gotoViaPalette } from "./fixtures/connect";
-import { stubDeriveApp } from "./fixtures/grpc-stub";
+import { stubDeriveApp, stubProposeWorkflow } from "./fixtures/grpc-stub";
 import { expectOverlayAboveNavbar } from "./fixtures/overlay";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
@@ -40,6 +40,92 @@ test("builder: the Describe-a-workflow panel opens, clears the navbar, and close
   // Dismissible with Escape (like the other overlays).
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("builder-propose-panel")).toHaveCount(0);
+});
+
+/**
+ * The half the spec above never exercised: the plan actually LOWERING onto the canvas.
+ *
+ * `stubProposeWorkflow` has existed, fully implemented, with ZERO call sites — so
+ * `proposeWorkflow` was never fired by any spec, `builder-propose-apply` was never
+ * clicked, and `proposalToBuilderGraph`'s only guard was a pure-function unit test.
+ * Between that function and a node on the canvas sat `applyProposal` → `applyInsert`
+ * → the layout pass, none of it covered.
+ *
+ * This is model-FREE on purpose, so it runs in CI forever. The model's half — that a
+ * real model returns an admissible plan — is a separate, opt-in concern; the lowering
+ * is deterministic and deserves a deterministic gate.
+ */
+test("builder: a proposed plan lowers into wired canvas nodes (the apply half)", async ({
+  page,
+}) => {
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+
+  // A FAN-OUT: two independent middle steps that both feed a final step. A chain would
+  // pass even if edges were dropped and the layout fell back to sequential order.
+  await stubProposeWorkflow(page, {
+    steps: [
+      { role: "researcher", intent: "Gather the candidate engines" },
+      { role: "analyst", intent: "Compare durability guarantees" },
+      { role: "analyst", intent: "Compare operational cost" },
+      { role: "writer", intent: "Write the comparison" },
+    ],
+    edges: [
+      { parent: 0, child: 1 },
+      { parent: 0, child: 2 },
+      { parent: 1, child: 3 },
+      { parent: 2, child: 3 },
+    ],
+  });
+
+  await connectConsole(page, gw);
+  await gotoViaPalette(page, "recipes");
+  await page.getByTestId("new-blueprint").click();
+  await expect(page.getByTestId("builder-canvas")).toBeVisible({ timeout: 30_000 });
+
+  // The canvas starts empty — otherwise "4 nodes" could be true of nodes we did not add.
+  const nodes = page.getByTestId("builder-node");
+  const before = await nodes.count();
+
+  await page.getByTestId("builder-propose").click();
+  await page.getByTestId("builder-propose-goal").fill("Compare two durable-execution engines.");
+  await page.getByTestId("builder-propose-submit").click();
+
+  // The proposal renders as a reviewable list BEFORE anything touches the canvas —
+  // propose-then-confirm, not propose-and-apply.
+  await expect(page.getByTestId("builder-propose-steps")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("builder-propose-step")).toHaveCount(4);
+  expect(await nodes.count()).toBe(before);
+
+  await page.getByTestId("builder-propose-apply").click();
+  await expect(page.getByTestId("builder-propose-panel")).toHaveCount(0);
+
+  // THE ASSERTION. Four proposed steps become four canvas nodes…
+  await expect(nodes).toHaveCount(before + 4);
+  // …every one an AGENT step (a proposed role is a model step, never a tool step that
+  // would land unconfigured)…
+  await expect(page.getByTestId("builder-node").first()).toHaveAttribute("data-kind", "model");
+  await expect(page.getByTestId("builder-node-needs-config")).toHaveCount(0);
+  // …and each node carries its ROLE as the label (the node shows the role; the intent
+  // rides the prompt, asserted below).
+  await expect(page.getByLabel("Agent Researcher")).toBeVisible();
+  await expect(page.getByLabel("Agent Writer")).toBeVisible();
+  await expect(page.getByLabel("Agent Analyst")).toHaveCount(2);
+
+  // Applying SELECTS the first inserted node, so its config drawer is already open —
+  // the same landing behaviour the pattern macros have. That is where the INTENT is
+  // visible, and asserting it here is what stops four correctly-labelled but EMPTY
+  // agents passing everything above.
+  const drawer = page.getByTestId("step-config-drawer");
+  await expect(drawer).toBeVisible();
+  await expect(drawer).toContainText("Gather the candidate engines");
+
+  // The last step's intent survived too — checked after dismissing the drawer, whose
+  // scrim would otherwise swallow the click.
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
+  await page.getByLabel("Agent Writer").click();
+  await expect(drawer).toBeVisible();
+  await expect(drawer).toContainText("Write the comparison");
 });
 
 // The Apps chat surface's multi-step authoring, end to end and model-free. The console

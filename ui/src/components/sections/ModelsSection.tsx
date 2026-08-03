@@ -296,9 +296,7 @@ export function ModelsSection() {
             <span className="chip--soon">Cloud</span>
           </span>
           <span className="metric-card__label">Connect a cloud provider</span>
-          <span className="metric-card__sub">
-            Managed vendor keys + OAuth arrive with Cloud (D129).
-          </span>
+          <span className="metric-card__sub">Managed vendor keys and OAuth arrive with Cloud.</span>
         </div>
       </m.div>
     </section>
