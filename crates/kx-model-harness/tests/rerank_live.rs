@@ -8,7 +8,7 @@
 //! # llama.cpp (Gemma-4 GGUF):
 //! cargo test -p kx-model-harness --test rerank_live --features with-model \
 //!   -- --ignored --nocapture rerank_live_llamacpp
-//! # Ollama (gemma3:12b daemon on :11434):
+//! # Ollama (gemma4:12b daemon on :11434; override with KX_RERANK_OLLAMA_MODEL):
 //! cargo test -p kx-model-harness --test rerank_live -- --ignored --nocapture rerank_live_ollama
 //! ```
 //!
@@ -92,14 +92,17 @@ fn rerank_live_llamacpp() {
 }
 
 #[test]
-#[ignore = "real Ollama gemma3 daemon on :11434; opt in with --ignored"]
+#[ignore = "real Ollama gemma4 daemon on :11434; opt in with --ignored"]
 fn rerank_live_ollama() {
     use kx_ollama::{OllamaBackend, OllamaClient};
     use std::collections::BTreeSet;
     use std::sync::Arc;
 
+    // Gemma-4 is the live-serve model. This is a CAPABILITY test (a permutation under a
+    // JSON format), not a bench arm, so moving it compares nothing to a committed
+    // baseline — unlike `run-bench-recapture.sh`, which stays on gemma3 deliberately.
     let model =
-        std::env::var("KX_RERANK_OLLAMA_MODEL").unwrap_or_else(|_| "gemma3:12b".to_string());
+        std::env::var("KX_RERANK_OLLAMA_MODEL").unwrap_or_else(|_| "gemma4:12b".to_string());
     let base =
         std::env::var("KX_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
     let client = Arc::new(OllamaClient::new(&base, false).expect("ollama client"));

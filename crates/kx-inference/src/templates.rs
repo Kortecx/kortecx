@@ -22,53 +22,26 @@ use kx_llamacpp::ChatMessage;
 /// Render `messages` with a built-in template keyed on `model_desc`'s leading
 /// architecture token. `model_desc` is `kx_llamacpp::Model::desc()` (llama.cpp's
 /// `llama_model_desc`, e.g. `"gemma4 12B Q4_K - Medium"` → arch `"gemma4"`).
+///
+/// The per-family templates come from [`crate::model_family`] — the same table the
+/// FFI-free Ollama backend reads, so the two backends cannot prompt one model two ways.
+///
+/// ⚠ Resolution is EXACT, and used to be a prefix (`arch.starts_with("gemma")`). That
+/// prefix handed **Gemma-3 the Gemma-4 vocabulary**: the families share a name stem and
+/// share no control tokens (`<start_of_turn>` vs `<|turn>`). Gemma-3 now resolves to its
+/// own entry and renders correctly; an arch in no entry still falls back to `ChatML`.
 #[must_use]
 pub(crate) fn builtin_render(model_desc: &str, messages: &[ChatMessage]) -> String {
-    let arch = model_desc.split_whitespace().next().unwrap_or_default();
-    if arch.starts_with("gemma") {
-        gemma(messages)
-    } else {
-        // ChatML is the broad default (Qwen / Yi / many Mistral GGUFs). Reached
-        // only when the embedded template is absent or unrenderable AND the model
-        // is not Gemma — a deliberately conservative last resort.
-        chatml(messages)
-    }
-}
-
-/// Gemma-4 turn format (`<|turn>{role}\n…<turn|>`) + the answer-channel
-/// generation prompt the embedded template emits for `add_generation_prompt` with
-/// `enable_thinking=false`. Gemma's assistant role token is `model`.
-fn gemma(messages: &[ChatMessage]) -> String {
-    let mut s = String::new();
-    for m in messages {
-        let role = if m.role == "assistant" {
-            "model"
-        } else {
-            m.role.as_str()
-        };
-        s.push_str("<|turn>");
-        s.push_str(role);
-        s.push('\n');
-        s.push_str(&m.content);
-        s.push_str("<turn|>\n");
-    }
-    s.push_str("<|turn>model\n<|channel>thought\n<channel|>");
-    s
-}
-
-/// Qwen / `ChatML` format (`<|im_start|>{role}\n…<|im_end|>`) + the assistant
-/// prefix. Byte-identical to the long-standing hand-rolled `chatml()` shape.
-fn chatml(messages: &[ChatMessage]) -> String {
-    let mut s = String::new();
-    for m in messages {
-        s.push_str("<|im_start|>");
-        s.push_str(&m.role);
-        s.push('\n');
-        s.push_str(&m.content);
-        s.push_str("<|im_end|>\n");
-    }
-    s.push_str("<|im_start|>assistant\n");
-    s
+    let template = crate::model_family::resolve_from_desc(model_desc)
+        .map_or(crate::model_family::CHATML, |f| f.template);
+    // ChatML is the broad default (Qwen / Yi / many Mistral GGUFs) — reached when the
+    // embedded template is absent or unrenderable AND the arch is unregistered, a
+    // deliberately conservative last resort.
+    template.render_messages(
+        messages
+            .iter()
+            .map(|m| (m.role.as_str(), m.content.as_str())),
+    )
 }
 
 #[cfg(test)]
@@ -89,9 +62,24 @@ mod tests {
         );
     }
 
+    /// ★ CORRECTED. This test used to assert that `gemma3` rendered in GEMMA-4's
+    /// vocabulary, because the dispatch was a `starts_with("gemma")` prefix. That was
+    /// the bug, asserted as if it were the intent: the two families share a name stem
+    /// and share NO control tokens, so a Gemma-3 model whose embedded template failed to
+    /// render was handed `<|turn>` markers it has never been trained on.
+    ///
+    /// Gemma-3 now resolves to its own registry entry — `<start_of_turn>`, no system
+    /// role, no thought channel.
     #[test]
-    fn gemma3_prefix_also_matches() {
-        assert!(builtin_render("gemma3 4B", &msgs()).starts_with("<|turn>system\n"));
+    fn gemma3_renders_its_own_vocabulary_not_gemma4s() {
+        let out = builtin_render("gemma3 4B", &msgs());
+        assert!(out.starts_with("<start_of_turn>user\n"), "{out:?}");
+        for gemma4_marker in ["<|turn>", "<turn|>", "<|channel>thought"] {
+            assert!(
+                !out.contains(gemma4_marker),
+                "gemma3 must not inherit gemma4's {gemma4_marker:?}: {out:?}"
+            );
+        }
     }
 
     #[test]
@@ -112,7 +100,7 @@ mod tests {
     #[test]
     fn assistant_role_renders_as_model_for_gemma() {
         let m = vec![ChatMessage::assistant("prior")];
-        assert!(gemma(&m).starts_with("<|turn>model\nprior<turn|>\n"));
+        assert!(builtin_render("gemma4 12B", &m).starts_with("<|turn>model\nprior<turn|>\n"));
     }
 
     #[test]

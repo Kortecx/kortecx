@@ -1214,11 +1214,43 @@ message LoadModelResponse {
   bool loaded = 2;        // residency AFTER the op (true on success)
   bool was_resident = 3;  // residency BEFORE the op (false ⇒ a cold load happened)
 }
-message OffloadModelRequest { string model_id = 1; }
+message OffloadModelRequest {
+  string model_id = 1;
+  bool force = 2;         // offload even when the model is IN USE. Default false: an
+                          //   in-use model is REFUSED (not an error — see `refused`)
+                          //   so a client can warn before disrupting live work.
+}
 message OffloadModelResponse {
   string model_id = 1;
   bool loaded = 2;        // residency AFTER the op (false on success)
   bool was_resident = 3;  // residency BEFORE (false ⇒ idempotent no-op offload)
+  // Who was holding the model when this was called. Populated whenever the usage
+  // check ran, INCLUDING on a forced offload — a client that overrode the refusal
+  // still gets to say what it disrupted.
+  repeated ModelHolder in_use_by = 4;
+  // True ⇒ nothing was offloaded because `in_use_by` is non-empty and `force` was
+  // false. NOT an error: the caller is expected to warn and offer the override.
+  bool refused = 5;
+  // ⚠ Whether the in-use check actually RAN. False ⇒ this gateway has no usage view
+  // wired, so `in_use_by` being empty means "nothing was checked", NOT "nothing is
+  // using it". Without this field an unwired guard is indistinguishable from a clean
+  // bill of health, which is the failure mode the guard exists to prevent.
+  bool usage_checked = 6;
+}
+
+// One holder of a model: work that would be disrupted by offloading it.
+message ModelHolder {
+  ModelHolderKind kind = 1;
+  string handle        = 2;  // the app / workflow handle holding it
+  string detail        = 3;  // advisory display prose (e.g. "hosted server running")
+}
+
+enum ModelHolderKind {
+  MODEL_HOLDER_KIND_UNSPECIFIED = 0;
+  MODEL_HOLDER_HOSTED_APP       = 1;  // a hosted App whose server is live
+  MODEL_HOLDER_APP              = 2;  // a saved App bound to this model
+  MODEL_HOLDER_WORKFLOW         = 3;  // a saved Workflow bound to this model
+  MODEL_HOLDER_RUN              = 4;  // an in-flight run
 }
 
 // Model Control v2 (model acquisition): download a model and REGISTER it at runtime

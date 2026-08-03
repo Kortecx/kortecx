@@ -1851,9 +1851,21 @@ export abstract class KxClientBase {
    * POC-3: evict a REGISTERED local model from RAM (real `llama_model_free`).
    * Idempotent (`wasResident=false` if it was not loaded); an unregistered id
    * throws {@link KxNotFound}.
+   *
+   * IN-USE GUARD: offloading destroys the model, so live work bound to it is disrupted
+   * irreversibly. When something holds it the call is REFUSED rather than performed —
+   * `refused = true`, `inUseBy` names the holders, and nothing was evicted. That is not
+   * an error: warn the user, then re-call with `force: true` to proceed anyway.
+   *
+   * ⚠ Check `usageChecked` before treating an empty `inUseBy` as safe. A gateway with no
+   * usage view wired returns no holders because nothing was CHECKED, which is not the
+   * same as nothing being in use.
    */
-  async offloadModel(modelId: string): Promise<ModelLifecycleResult> {
-    const resp = await rpc(this.grpc.offloadModel({ modelId }));
+  async offloadModel(
+    modelId: string,
+    opts: { force?: boolean } = {},
+  ): Promise<ModelLifecycleResult> {
+    const resp = await rpc(this.grpc.offloadModel({ modelId, force: opts.force ?? false }));
     return ModelLifecycleResult.fromOffload(resp);
   }
 

@@ -85,6 +85,7 @@ mod approval_admin;
 mod derive;
 mod model_lifecycle;
 mod model_pull;
+mod model_usage;
 mod models_view;
 mod mote_def_view;
 mod mote_detail;
@@ -185,6 +186,7 @@ pub use mcp_gateway_admin::{
 };
 pub use model_lifecycle::{ModelLifecycleControl, ModelLifecycleOutcome};
 pub use model_pull::{ModelPuller, PullAdmission, PullPhase, PullProgress, PullSource};
+pub use model_usage::{ModelHolder, ModelHolderKind, ModelUsageView};
 pub use models_view::{ModelCatalogView, ModelSummaryEntry};
 pub use mote_def_view::MoteDefView;
 pub use mote_detail::{MAX_CONFIG_ENTRIES, MAX_CONFIG_VALUE_BYTES, MAX_PROMPT_BYTES};

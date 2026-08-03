@@ -6,6 +6,28 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Offloading a model no longer disrupts live work without telling you.** `OffloadModel`
+  destroys the model to free RAM, and it used to do that unconditionally — stopping a
+  running app's model was one click, with no warning and no record of what it broke. The
+  server now checks what is holding the model first. If live work holds it, the offload is
+  **refused** rather than performed: nothing is evicted, and the response names the apps
+  that would have been disrupted. Pass `force` to proceed anyway, and the response still
+  lists what it disrupted. In the console the Models page shows the reason beside the
+  button with an "Offload anyway" override; from the CLI, `kx models offload <id>` prints
+  the holders and exits non-zero, and `--force` overrides it. A gateway that cannot
+  determine usage reports that it did not check, rather than reporting an empty list —
+  "nothing was checked" and "nothing is using it" look identical otherwise.
+
+- **Gemma-4 is now prompted in its own format.** Chat templates are selected by the model
+  family the server reports, and Gemma-4 matched no entry, so it received a format it was
+  never trained on. It answered anyway, which is why this was not obvious — but its
+  internal channel markers leaked into replies as ordinary text. Model families now live in
+  one table both model backends read, so a family cannot be templated one way in one place
+  and another way elsewhere; Gemma-3 was affected by that split and is also fixed. Adding
+  support for a new model family is now a single entry in that table, and each family's
+  stop tokens are derived from its template rather than maintained separately. No action
+  needed — serve a Gemma-4 model and replies come back clean.
+
 - **A scaffolded web app is now written against the version it actually installs, and
   styled with a stylesheet it actually has.** The instructions the runtime gives a model
   when it scaffolds a hosted app previously named the framework and listed the packages it

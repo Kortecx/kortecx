@@ -750,6 +750,11 @@ pub struct GatewayService {
     /// residency). `None` ⇒ both RPCs return `unimplemented` (the `GetServerInfo`
     /// precedent). Off-journal, off-digest — pure ephemeral RAM state.
     model_lifecycle: Option<Arc<dyn crate::model_lifecycle::ModelLifecycleControl>>,
+    /// The optional MODEL-USAGE view behind `OffloadModel`'s in-use guard: who is
+    /// holding a model right now. `None` ⇒ the guard cannot run, and the response says
+    /// so via `usage_checked = false` rather than reporting an empty holder list as
+    /// safety. Off-journal, off-digest — an observation, never authority.
+    model_usage: Option<Arc<dyn crate::model_usage::ModelUsageView>>,
     /// POC-1 (Settings "Workspace"): the NON-SECRET server-configuration facts the
     /// host projects via `GetServerInfo`. `None` ⇒ `GetServerInfo` returns
     /// `unimplemented`. A plain value (not a live view) — fixed at serve startup;
@@ -977,6 +982,7 @@ impl GatewayService {
             put_cap_bytes: DEFAULT_PUT_CAP_BYTES,
             models: None,
             model_lifecycle: None,
+            model_usage: None,
             server_info: None,
             mote_defs: None,
             feedback: None,
@@ -1263,6 +1269,15 @@ impl GatewayService {
         control: Arc<dyn crate::model_lifecycle::ModelLifecycleControl>,
     ) -> Self {
         self.model_lifecycle = Some(control);
+        self
+    }
+
+    /// Wire the MODEL-USAGE view — the in-use guard behind `OffloadModel`. Without it
+    /// the guard cannot run and every offload response reports `usage_checked = false`,
+    /// so a client never mistakes "not checked" for "not in use". Off-journal.
+    #[must_use]
+    pub fn with_model_usage(mut self, usage: Arc<dyn crate::model_usage::ModelUsageView>) -> Self {
+        self.model_usage = Some(usage);
         self
     }
 
@@ -3420,11 +3435,62 @@ impl KxGateway for GatewayService {
             .model_lifecycle
             .as_ref()
             .ok_or_else(|| Status::unimplemented("OffloadModel: no model lifecycle wired"))?;
-        let out = control.offload(&request.into_inner().model_id)?;
+        let req = request.into_inner();
+        // THE IN-USE GUARD. Offloading destroys the model, so live work bound to it is
+        // disrupted and cannot be un-disrupted. The guard REFUSES rather than erroring:
+        // a refusal carries the holder list so the client can warn and offer the
+        // override, which an error status could not do without stringly-typed detail.
+        //
+        // A usage-view failure PROPAGATES. Degrading it to "no holders" would turn an
+        // unreadable supervisor into a silent green light for exactly the disruption
+        // this guard exists to prevent.
+        let (holders, usage_checked) = match self.model_usage.as_ref() {
+            Some(view) => (view.holders(&req.model_id)?, true),
+            None => (Vec::new(), false),
+        };
+        let in_use_by: Vec<proto::ModelHolder> = holders
+            .iter()
+            .map(|h| proto::ModelHolder {
+                kind: match h.kind {
+                    crate::model_usage::ModelHolderKind::HostedApp => {
+                        proto::ModelHolderKind::ModelHolderHostedApp as i32
+                    }
+                    crate::model_usage::ModelHolderKind::App => {
+                        proto::ModelHolderKind::ModelHolderApp as i32
+                    }
+                    crate::model_usage::ModelHolderKind::Workflow => {
+                        proto::ModelHolderKind::ModelHolderWorkflow as i32
+                    }
+                    crate::model_usage::ModelHolderKind::Run => {
+                        proto::ModelHolderKind::ModelHolderRun as i32
+                    }
+                },
+                handle: h.handle.clone(),
+                detail: h.detail.clone(),
+            })
+            .collect();
+        if !holders.is_empty() && !req.force {
+            // Nothing was touched. `loaded` therefore reports the residency the model
+            // STILL has, not the residency an offload would have produced.
+            return Ok(Response::new(proto::OffloadModelResponse {
+                model_id: req.model_id,
+                loaded: true,
+                was_resident: true,
+                in_use_by,
+                refused: true,
+                usage_checked,
+            }));
+        }
+        let out = control.offload(&req.model_id)?;
         Ok(Response::new(proto::OffloadModelResponse {
             model_id: out.model_id,
             loaded: out.loaded,
             was_resident: out.was_resident,
+            // Echoed on a FORCED offload too: a caller that overrode the refusal still
+            // gets a record of what it disrupted.
+            in_use_by,
+            refused: false,
+            usage_checked,
         }))
     }
 

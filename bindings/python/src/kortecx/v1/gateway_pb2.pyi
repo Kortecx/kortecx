@@ -75,6 +75,14 @@ class WorkflowExecutionMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     WORKFLOW_EXECUTION_MODE_FROZEN: _ClassVar[WorkflowExecutionMode]
     WORKFLOW_EXECUTION_MODE_DYNAMIC: _ClassVar[WorkflowExecutionMode]
 
+class ModelHolderKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    MODEL_HOLDER_KIND_UNSPECIFIED: _ClassVar[ModelHolderKind]
+    MODEL_HOLDER_HOSTED_APP: _ClassVar[ModelHolderKind]
+    MODEL_HOLDER_APP: _ClassVar[ModelHolderKind]
+    MODEL_HOLDER_WORKFLOW: _ClassVar[ModelHolderKind]
+    MODEL_HOLDER_RUN: _ClassVar[ModelHolderKind]
+
 class HostedAppState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     HOSTED_APP_STATE_UNSPECIFIED: _ClassVar[HostedAppState]
@@ -146,6 +154,11 @@ WORKFLOW_STEP_KIND_CONDITIONAL: WorkflowStepKind
 WORKFLOW_EXECUTION_MODE_UNSPECIFIED: WorkflowExecutionMode
 WORKFLOW_EXECUTION_MODE_FROZEN: WorkflowExecutionMode
 WORKFLOW_EXECUTION_MODE_DYNAMIC: WorkflowExecutionMode
+MODEL_HOLDER_KIND_UNSPECIFIED: ModelHolderKind
+MODEL_HOLDER_HOSTED_APP: ModelHolderKind
+MODEL_HOLDER_APP: ModelHolderKind
+MODEL_HOLDER_WORKFLOW: ModelHolderKind
+MODEL_HOLDER_RUN: ModelHolderKind
 HOSTED_APP_STATE_UNSPECIFIED: HostedAppState
 HOSTED_STOPPED: HostedAppState
 HOSTED_MATERIALIZING: HostedAppState
@@ -1399,20 +1412,38 @@ class LoadModelResponse(_message.Message):
     def __init__(self, model_id: _Optional[str] = ..., loaded: bool = ..., was_resident: bool = ...) -> None: ...
 
 class OffloadModelRequest(_message.Message):
-    __slots__ = ("model_id",)
+    __slots__ = ("model_id", "force")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    FORCE_FIELD_NUMBER: _ClassVar[int]
     model_id: str
-    def __init__(self, model_id: _Optional[str] = ...) -> None: ...
+    force: bool
+    def __init__(self, model_id: _Optional[str] = ..., force: bool = ...) -> None: ...
 
 class OffloadModelResponse(_message.Message):
-    __slots__ = ("model_id", "loaded", "was_resident")
+    __slots__ = ("model_id", "loaded", "was_resident", "in_use_by", "refused", "usage_checked")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     LOADED_FIELD_NUMBER: _ClassVar[int]
     WAS_RESIDENT_FIELD_NUMBER: _ClassVar[int]
+    IN_USE_BY_FIELD_NUMBER: _ClassVar[int]
+    REFUSED_FIELD_NUMBER: _ClassVar[int]
+    USAGE_CHECKED_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     loaded: bool
     was_resident: bool
-    def __init__(self, model_id: _Optional[str] = ..., loaded: bool = ..., was_resident: bool = ...) -> None: ...
+    in_use_by: _containers.RepeatedCompositeFieldContainer[ModelHolder]
+    refused: bool
+    usage_checked: bool
+    def __init__(self, model_id: _Optional[str] = ..., loaded: bool = ..., was_resident: bool = ..., in_use_by: _Optional[_Iterable[_Union[ModelHolder, _Mapping]]] = ..., refused: bool = ..., usage_checked: bool = ...) -> None: ...
+
+class ModelHolder(_message.Message):
+    __slots__ = ("kind", "handle", "detail")
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    kind: ModelHolderKind
+    handle: str
+    detail: str
+    def __init__(self, kind: _Optional[_Union[ModelHolderKind, str]] = ..., handle: _Optional[str] = ..., detail: _Optional[str] = ...) -> None: ...
 
 class PullModelRequest(_message.Message):
     __slots__ = ("ollama_tag", "url", "sha256", "model_id")

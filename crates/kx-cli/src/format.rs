@@ -701,20 +701,87 @@ pub fn render_load_model(resp: &proto::LoadModelResponse, json: bool) -> String 
     }
 }
 
-/// Render `models offload` — the residency transition (POC-3).
+/// Render `models offload` — the residency transition, plus the in-use guard's verdict.
+///
+/// `usage_checked` is surfaced deliberately: on a gateway with no usage view an empty
+/// holder list means NOTHING WAS CHECKED, and printing that as a clean offload would be
+/// the guard reading as a safety guarantee it never made.
 #[must_use]
 pub fn render_offload_model(resp: &proto::OffloadModelResponse, json: bool) -> String {
+    let holders: Vec<Value> = resp
+        .in_use_by
+        .iter()
+        .map(|h| {
+            json!({
+                "kind": holder_kind_label(h.kind),
+                "handle": h.handle,
+                "detail": h.detail,
+            })
+        })
+        .collect();
     if json {
-        json!({
+        return json!({
             "model_id": resp.model_id,
             "loaded": resp.loaded,
             "was_resident": resp.was_resident,
+            "refused": resp.refused,
+            "usage_checked": resp.usage_checked,
+            "in_use_by": holders,
         })
-        .to_string()
-    } else if resp.was_resident {
-        format!("{} offloaded", resp.model_id)
+        .to_string();
+    }
+    let mut out = String::new();
+    if resp.refused {
+        let _ = writeln!(
+            out,
+            "{} NOT offloaded — it is in use. Offloading would disrupt:",
+            resp.model_id
+        );
+        for h in &resp.in_use_by {
+            let detail = if h.detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", h.detail)
+            };
+            let _ = writeln!(
+                out,
+                "  · {} {}{detail}",
+                holder_kind_label(h.kind),
+                h.handle
+            );
+        }
+        out.push_str("Re-run with --force to offload anyway.");
+        return out;
+    }
+    if resp.was_resident {
+        let _ = write!(out, "{} offloaded", resp.model_id);
     } else {
-        format!("{} was not loaded", resp.model_id)
+        let _ = write!(out, "{} was not loaded", resp.model_id);
+    }
+    if !resp.in_use_by.is_empty() {
+        // A FORCED offload. Say what was disrupted rather than reporting a clean success.
+        let _ = write!(
+            out,
+            " — FORCED, disrupting {} holder(s):",
+            resp.in_use_by.len()
+        );
+        for h in &resp.in_use_by {
+            let _ = write!(out, " {}", h.handle);
+        }
+    } else if !resp.usage_checked {
+        out.push_str(" (in-use check unavailable on this gateway — nothing was verified)");
+    }
+    out
+}
+
+/// Display label for a [`proto::ModelHolderKind`] discriminant.
+fn holder_kind_label(kind: i32) -> &'static str {
+    match proto::ModelHolderKind::try_from(kind) {
+        Ok(proto::ModelHolderKind::ModelHolderHostedApp) => "hosted app",
+        Ok(proto::ModelHolderKind::ModelHolderApp) => "app",
+        Ok(proto::ModelHolderKind::ModelHolderWorkflow) => "workflow",
+        Ok(proto::ModelHolderKind::ModelHolderRun) => "run",
+        _ => "holder",
     }
 }
 

@@ -20,6 +20,13 @@ export const REPO_ROOT = path.resolve(HERE, "../../..");
 
 let cachedBin: string | null = null;
 
+/**
+ * The model a `model: true` spawn serves when the operator names none. Gemma-4 via
+ * Ollama — the family the runtime renders a real chat template for. Override with
+ * `KX_SERVE_OLLAMA_MODELS`.
+ */
+const DEFAULT_MODEL = "gemma4:12b";
+
 function findOrBuildKx(): string {
   if (cachedBin) {
     return cachedBin;
@@ -113,10 +120,47 @@ export interface SpawnOpts {
    * branches.db store) are always wired; only snapshot's host read is gated.
    */
   fsRoot?: string;
+  /**
+   * Serve a REAL MODEL for this spawn — the opt-in the comment below used to
+   * describe and nothing implemented. Turns `KX_SERVE_OLLAMA` back `on` and names
+   * the model, so a console-originated request can reach a served model.
+   *
+   * REQUIRES a `serve-engine` binary via `KX_MODEL_BIN`, and fails loudly without
+   * one. `hnsw` does NOT imply `serve-engine`, so the default e2e binary does not
+   * merely lack a model — the model-driven RPCs (`DeriveApp`, `ProposeWorkflow`)
+   * are not compiled into it at all and answer `unimplemented`. Falling back to it
+   * would turn "no model" into a green test against a gateway that could never
+   * have answered.
+   *
+   * Every spec using this must ALSO `test.skip` itself off by default: CI has no
+   * Ollama daemon, and this is opt-in exactly like the `#[ignore]` live tests.
+   */
+  model?: boolean;
+}
+
+/**
+ * The `serve-engine` binary used for a `model: true` spawn. Kept OUT of
+ * {@link findOrBuildKx} deliberately: that function memoises ONE path for the whole
+ * process, so a run mixing model-less and model-served specs would hand the second
+ * kind whichever binary the first kind resolved.
+ *
+ * Never built on demand. A `serve-engine` build is minutes long and the feature set
+ * is part of the experiment, so the operator states it rather than inheriting a
+ * binary someone else's recipe happened to leave in `target/`.
+ */
+function modelBin(): string {
+  const bin = process.env.KX_MODEL_BIN;
+  if (!bin || !existsSync(bin)) {
+    const got = bin ? `a path that does not exist: ${bin}` : "no KX_MODEL_BIN";
+    throw new Error(
+      `spawnGateway({ model: true }) needs KX_MODEL_BIN pointing at a kx built with \`--features console,serve-engine,hnsw,hosted-apps,observability\`. Got ${got}. Refusing to fall back to the model-less binary: it has no serve-engine, so DeriveApp/ProposeWorkflow answer \`unimplemented\` and the spec would pass on nothing.`,
+    );
+  }
+  return bin;
 }
 
 export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
-  const kxBin = findOrBuildKx();
+  const kxBin = opts.model ? modelBin() : findOrBuildKx();
   const [port, wsPort, consolePort] = await Promise.all([freePort(), freePort(), freePort()]);
   const tmp = await mkdtemp(path.join(tmpdir(), "kxe2e-"));
   const endpoint = `http://127.0.0.1:${port}`;
@@ -143,21 +187,39 @@ export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
   if (opts.corsOrigin) {
     args.push("--cors-origin", opts.corsOrigin);
   }
-  // Force Ollama OFF so every spawn is model-free + deterministic, MATCHING CI (which
-  // has no Ollama daemon). `KX_SERVE_OLLAMA=auto` (the default) would auto-detect a
-  // dev's ambient Ollama on :11434 and silently provision a model — flaking any spec
-  // that asserts model-free behaviour (e.g. the no-model degrade notice).
+  // Ollama is forced OFF unless a spec opts IN, so the default spawn is model-free and
+  // deterministic, MATCHING CI (which has no Ollama daemon). `KX_SERVE_OLLAMA=auto` (the
+  // real default) would auto-detect a dev's ambient Ollama on :11434 and silently
+  // provision a model — flaking any spec that asserts model-free behaviour (e.g. the
+  // no-model degrade notice).
   //
-  // ⚠ THIS IS UNCONDITIONAL, AND THERE IS NO OPT-IN. This comment used to end "The
-  // model-needing specs opt back in explicitly" — describing a mechanism that was never
-  // built: `SpawnOpts` has no model field, `KX_SERVE_OLLAMA` appears nowhere else under
-  // `ui/`, and the literal is written AFTER the `...process.env` spread, so an ambient
-  // value cannot override it either. Consequence, stated plainly: **all 57 console e2e
-  // specs are model-less by construction**, so no CI check can see a prompt regression, a
-  // failed authoring call, or a scaffold that produces the wrong files — the console has
-  // ZERO coverage against a real model. Adding an opt-in here is the seam that would
-  // close it; until then do not read a green e2e suite as evidence about model behaviour.
-  const env: NodeJS.ProcessEnv = { ...process.env, KX_SERVE_OLLAMA: "off" };
+  // ⚠ THE LITERAL GOES AFTER THE SPREAD IN BOTH ARMS, so an ambient `KX_SERVE_OLLAMA`
+  // can never decide which kind of spawn this is: the spec does, and only the spec.
+  //
+  // What this replaced, because the correction is the useful part: the opt-in described
+  // here did not exist, and the comment saying "the model-needing specs opt back in
+  // explicitly" described a mechanism nobody had built. It also over-claimed in the
+  // other direction — "all console e2e specs are model-less by construction" is false.
+  // `rule41-lineage-gemma.spec.ts` is model-served; it simply does not come through this
+  // fixture, pointing instead at a hand-started serve on a fixed port. The accurate
+  // statement was always narrower: every spec routed through `spawnGateway` was
+  // model-less. That is what `model: true` now changes — and specs using it still opt
+  // themselves out of the default suite, so a green CI run remains no evidence at all
+  // about model behaviour.
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (opts.model) {
+    env.KX_SERVE_OLLAMA = "on";
+    env.KX_SERVE_OLLAMA_MODELS = process.env.KX_SERVE_OLLAMA_MODELS ?? DEFAULT_MODEL;
+    // ONE ENGINE PER RUN. Exporting a GGUF alongside the Ollama vars makes the GGUF the
+    // serve PRIMARY while only the label says Ollama — a run that reports the engine it
+    // was not using. Cleared here so an ambient shell cannot produce that. `undefined`
+    // is a genuine UNSET for `child_process.spawn` (verified: it wins over an ambient
+    // value, rather than reaching the child as the string "undefined").
+    env.KX_SERVE_MODEL_GGUF = undefined;
+    env.KX_GEMMA_MODEL_DEST = undefined;
+  } else {
+    env.KX_SERVE_OLLAMA = "off";
+  }
   if (opts.fsRoot) {
     env.KX_SERVE_FS_ROOT = opts.fsRoot;
   }

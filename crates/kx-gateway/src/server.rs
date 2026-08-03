@@ -1943,6 +1943,8 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     }
     // D213: wire the hosted-app supervisor (built above; behind `hosted-apps`).
     #[cfg(feature = "hosted-apps")]
+    let hosted_supervisor_for_usage = hosted_supervisor.clone();
+    #[cfg(feature = "hosted-apps")]
     {
         gateway = gateway.with_hosted_supervisor(hosted_supervisor);
         tracing::info!("D213: hosted-app supervisor wired (hosted-apps)");
@@ -2244,6 +2246,38 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             gateway = gateway.with_app_manifest(view);
             tracing::info!("Permission-aware Apps: GetAppManifest seam wired");
         }
+    }
+
+    // The OffloadModel IN-USE GUARD: which live hosted Apps hold which model, so an
+    // offload can refuse and name what it would disrupt.
+    //
+    // ⚠ PLACEMENT IS THE WHOLE POINT. This was first written inside the `mcp-gateway`
+    // block above, where it compiled cleanly and was UNREACHABLE on the feature set the
+    // live proofs actually build (`serve-engine,hnsw,hosted-apps,observability` — no
+    // `mcp-gateway`). rustc's "unreachable `pub` item" was the only thing that said so.
+    // It is gated here on `hosted-apps` alone — exactly what it needs — and placed after
+    // `app_manifest` is bound. Ask what RUNS a guard, never whether it compiles.
+    #[cfg(feature = "hosted-apps")]
+    if let Some(view) = app_manifest.clone() {
+        let principal = parties
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "local-dev".to_string());
+        let usage = std::sync::Arc::new(crate::model_usage_host::HostModelUsage::new(
+            hosted_supervisor_for_usage,
+            view,
+            principal,
+            serve_model.as_ref().map(|m| m.0.clone()),
+        ));
+        gateway = gateway.with_model_usage(usage);
+        tracing::info!("OffloadModel: in-use guard wired (live hosted Apps hold their model)");
+    } else {
+        // LOUD, not silent: without this the RPC still answers, reporting
+        // `usage_checked = false` — but nobody reading the log would know why.
+        tracing::warn!(
+            "OffloadModel: in-use guard NOT wired (no App manifest resolver); offload \
+             responses will report usage_checked=false"
+        );
     }
 
     // (4) Auth interceptor + bind + serve. Posture: --dev-allow-local (loopback

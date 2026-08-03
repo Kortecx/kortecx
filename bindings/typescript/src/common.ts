@@ -219,6 +219,7 @@ export {
   SnapshotResult,
 } from "./branch.js";
 export { ModelLifecycleResult, ModelSummary, PullStatus } from "./models.js";
+export type { ModelHolder } from "./models.js";
 // POC-1: the resolved gateway configuration view (Settings; display-only).
 export { ServerInfo } from "./serverinfo.js";
 

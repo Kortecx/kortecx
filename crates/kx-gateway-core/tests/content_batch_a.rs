@@ -575,6 +575,7 @@ async fn load_offload_round_trip_and_unregistered_is_fail_closed() {
     let r = client
         .offload_model(proto::OffloadModelRequest {
             model_id: "gemma".into(),
+            force: false,
         })
         .await
         .unwrap()
@@ -594,6 +595,7 @@ async fn load_offload_round_trip_and_unregistered_is_fail_closed() {
     let err = client
         .offload_model(proto::OffloadModelRequest {
             model_id: "not-registered".into(),
+            force: false,
         })
         .await
         .unwrap_err();
@@ -631,4 +633,227 @@ async fn load_offload_degrade_without_seam_and_require_auth() {
         .await
         .unwrap_err();
     assert_eq!(err.code(), Code::Unauthenticated);
+}
+
+// --- The OffloadModel IN-USE GUARD ---------------------------------------------
+//
+// Offloading destroys a model. Before this guard, doing it under live work was one
+// call with no warning, no refusal and no record of what it disrupted.
+
+/// A deterministic [`ModelUsageView`] over a fixed holder map, with an opt-in FAILURE
+/// mode so the "the view itself broke" branch can be exercised — that branch is the one
+/// that must NOT degrade to "nothing is using it".
+struct FixedUsage {
+    holders: std::collections::BTreeMap<String, Vec<kx_gateway_core::ModelHolder>>,
+    fail: bool,
+}
+
+impl FixedUsage {
+    fn new(pairs: &[(&str, &[(&str, &str)])]) -> Self {
+        let mut holders = std::collections::BTreeMap::new();
+        for (model, hs) in pairs {
+            holders.insert(
+                (*model).to_string(),
+                hs.iter()
+                    .map(|(handle, detail)| kx_gateway_core::ModelHolder {
+                        kind: kx_gateway_core::ModelHolderKind::HostedApp,
+                        handle: (*handle).to_string(),
+                        detail: (*detail).to_string(),
+                    })
+                    .collect(),
+            );
+        }
+        Self {
+            holders,
+            fail: false,
+        }
+    }
+    fn failing() -> Self {
+        Self {
+            holders: std::collections::BTreeMap::new(),
+            fail: true,
+        }
+    }
+}
+
+impl kx_gateway_core::ModelUsageView for FixedUsage {
+    fn holders(&self, model_id: &str) -> Result<Vec<kx_gateway_core::ModelHolder>, GatewayError> {
+        if self.fail {
+            return Err(GatewayError::Internal("usage view unavailable".into()));
+        }
+        Ok(self.holders.get(model_id).cloned().unwrap_or_default())
+    }
+}
+
+/// ★ THE GUARD. An in-use model is REFUSED, not evicted — and the refusal carries the
+/// holder list so a client can say what it would disrupt rather than just "no".
+#[tokio::test]
+async fn offload_is_refused_when_live_work_holds_the_model() {
+    let run = build_run();
+    let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(run.journal));
+    let content: Arc<dyn ContentReader> = Arc::new(run.content);
+    let lifecycle = Arc::new(FixedLifecycle::new(&["gemma"], &["gemma"]));
+    let usage = Arc::new(FixedUsage::new(&[(
+        "gemma",
+        &[("apps/local/desk", "hosted server running")],
+    )]));
+    let service = GatewayService::new(reader, no_submitter(), content)
+        .with_model_lifecycle(lifecycle.clone())
+        .with_model_usage(usage);
+    let mut client = spawn_with_party(service, "alice@acme").await;
+
+    let r = client
+        .offload_model(proto::OffloadModelRequest {
+            model_id: "gemma".into(),
+            force: false,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(r.refused, "an in-use model must be refused");
+    assert!(r.usage_checked, "the guard ran");
+    assert!(r.loaded, "a refusal leaves the model resident");
+    assert_eq!(r.in_use_by.len(), 1);
+    assert_eq!(r.in_use_by[0].handle, "apps/local/desk");
+    assert_eq!(r.in_use_by[0].detail, "hosted server running");
+    assert_eq!(
+        r.in_use_by[0].kind,
+        proto::ModelHolderKind::ModelHolderHostedApp as i32
+    );
+    // The MODEL ITSELF must still be resident — a refusal that had already evicted
+    // would report the right words over the wrong state.
+    assert!(
+        lifecycle.resident.lock().unwrap().contains("gemma"),
+        "the refusal must not have offloaded anything"
+    );
+}
+
+/// `force` overrides the refusal AND still reports what it disrupted. A forced offload
+/// that returned a bare success would lose the only record of the disruption.
+#[tokio::test]
+async fn a_forced_offload_proceeds_and_still_names_what_it_disrupted() {
+    let run = build_run();
+    let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(run.journal));
+    let content: Arc<dyn ContentReader> = Arc::new(run.content);
+    let lifecycle = Arc::new(FixedLifecycle::new(&["gemma"], &["gemma"]));
+    let usage = Arc::new(FixedUsage::new(&[(
+        "gemma",
+        &[("apps/local/desk", "hosted server running")],
+    )]));
+    let service = GatewayService::new(reader, no_submitter(), content)
+        .with_model_lifecycle(lifecycle.clone())
+        .with_model_usage(usage);
+    let mut client = spawn_with_party(service, "alice@acme").await;
+
+    let r = client
+        .offload_model(proto::OffloadModelRequest {
+            model_id: "gemma".into(),
+            force: true,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(!r.refused);
+    assert!(!r.loaded, "force actually offloads");
+    assert!(r.was_resident);
+    assert_eq!(
+        r.in_use_by.len(),
+        1,
+        "a forced offload still reports its casualties"
+    );
+    assert!(!lifecycle.resident.lock().unwrap().contains("gemma"));
+}
+
+/// Nothing holding it ⇒ the ordinary offload, with the guard reporting that it ran.
+#[tokio::test]
+async fn offload_proceeds_when_nothing_holds_the_model() {
+    let run = build_run();
+    let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(run.journal));
+    let content: Arc<dyn ContentReader> = Arc::new(run.content);
+    let lifecycle = Arc::new(FixedLifecycle::new(&["gemma"], &["gemma"]));
+    // A holder on a DIFFERENT model — so this asserts the lookup is per-model rather
+    // than "are there any holders at all".
+    let usage = Arc::new(FixedUsage::new(&[("qwen", &[("apps/local/other", "x")])]));
+    let service = GatewayService::new(reader, no_submitter(), content)
+        .with_model_lifecycle(lifecycle)
+        .with_model_usage(usage);
+    let mut client = spawn_with_party(service, "alice@acme").await;
+
+    let r = client
+        .offload_model(proto::OffloadModelRequest {
+            model_id: "gemma".into(),
+            force: false,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(!r.refused);
+    assert!(!r.loaded);
+    assert!(r.usage_checked, "the guard ran and found nothing");
+    assert!(r.in_use_by.is_empty());
+}
+
+/// ★ THE ABSENT-INSTRUMENT CASE. With no usage view wired the holder list is empty —
+/// which is byte-identical to "nothing is using it". `usage_checked` is the ONLY thing
+/// that distinguishes them, and without it an unwired guard reads as a clean bill of
+/// health. This is the assertion that keeps the guard from being decoration.
+#[tokio::test]
+async fn an_unwired_usage_view_reports_unchecked_rather_than_safe() {
+    let run = build_run();
+    let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(run.journal));
+    let content: Arc<dyn ContentReader> = Arc::new(run.content);
+    let lifecycle = Arc::new(FixedLifecycle::new(&["gemma"], &["gemma"]));
+    // NO `.with_model_usage(..)`.
+    let service =
+        GatewayService::new(reader, no_submitter(), content).with_model_lifecycle(lifecycle);
+    let mut client = spawn_with_party(service, "alice@acme").await;
+
+    let r = client
+        .offload_model(proto::OffloadModelRequest {
+            model_id: "gemma".into(),
+            force: false,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(!r.refused, "no view ⇒ the offload still happens");
+    assert!(!r.loaded);
+    assert!(
+        !r.usage_checked,
+        "an unwired guard MUST report that it did not run — an empty holder list is \
+         otherwise indistinguishable from a clean check"
+    );
+    assert!(r.in_use_by.is_empty());
+}
+
+/// ★ A BROKEN VIEW MUST NOT READ AS SAFE. If the host cannot determine usage, the error
+/// propagates and the model stays resident. Degrading a failure to "no holders" would
+/// make an unreadable supervisor a green light for exactly the disruption being guarded.
+#[tokio::test]
+async fn a_usage_view_failure_propagates_and_offloads_nothing() {
+    let run = build_run();
+    let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(run.journal));
+    let content: Arc<dyn ContentReader> = Arc::new(run.content);
+    let lifecycle = Arc::new(FixedLifecycle::new(&["gemma"], &["gemma"]));
+    let service = GatewayService::new(reader, no_submitter(), content)
+        .with_model_lifecycle(lifecycle.clone())
+        .with_model_usage(Arc::new(FixedUsage::failing()));
+    let mut client = spawn_with_party(service, "alice@acme").await;
+
+    let err = client
+        .offload_model(proto::OffloadModelRequest {
+            model_id: "gemma".into(),
+            force: false,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::Internal);
+    assert!(
+        lifecycle.resident.lock().unwrap().contains("gemma"),
+        "a usage-view failure must leave the model resident"
+    );
 }
