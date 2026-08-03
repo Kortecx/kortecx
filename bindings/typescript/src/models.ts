@@ -126,6 +126,23 @@ export class PullStatus {
   }
 }
 
+/** One holder of a model — live work an offload would disrupt. */
+export interface ModelHolder {
+  /** What kind of work holds it: `hosted app` | `app` | `workflow` | `run`. */
+  readonly kind: string;
+  /** The App / Workflow handle. */
+  readonly handle: string;
+  /** Advisory display prose (never authority). */
+  readonly detail: string;
+}
+
+const HOLDER_KIND_LABEL: Record<number, string> = {
+  1: "hosted app",
+  2: "app",
+  3: "workflow",
+  4: "run",
+};
+
 /** The outcome of a `loadModel` / `offloadModel` call (POC-3). */
 export class ModelLifecycleResult {
   constructor(
@@ -135,6 +152,23 @@ export class ModelLifecycleResult {
     readonly loaded: boolean,
     /** Residency BEFORE the op (load: false ⇒ a cold load happened). */
     readonly wasResident: boolean,
+    /**
+     * Live work holding the model when offload was called. Populated on a refusal AND
+     * on a forced offload — a caller that overrode the refusal still gets a record of
+     * what it disrupted. Always empty for `loadModel`.
+     */
+    readonly inUseBy: readonly ModelHolder[] = [],
+    /**
+     * True ⇒ NOTHING was offloaded because the model is in use and `force` was not set.
+     * Not an error: warn the user, then re-call with `force: true` to proceed.
+     */
+    readonly refused: boolean = false,
+    /**
+     * ⚠ Whether the in-use check actually RAN. False ⇒ this gateway has no usage view,
+     * so an empty `inUseBy` means "nothing was checked", NOT "nothing is using it".
+     * Never present this as a clean bill of health.
+     */
+    readonly usageChecked: boolean = false,
   ) {}
 
   static fromLoad(r: PbLoadModelResponse): ModelLifecycleResult {
@@ -142,10 +176,32 @@ export class ModelLifecycleResult {
   }
 
   static fromOffload(r: PbOffloadModelResponse): ModelLifecycleResult {
-    return new ModelLifecycleResult(r.modelId, r.loaded, r.wasResident);
+    return new ModelLifecycleResult(
+      r.modelId,
+      r.loaded,
+      r.wasResident,
+      r.inUseBy.map((h) => ({
+        kind: HOLDER_KIND_LABEL[h.kind as number] ?? "holder",
+        handle: h.handle,
+        detail: h.detail,
+      })),
+      r.refused,
+      r.usageChecked,
+    );
   }
 
   toJSON() {
-    return { model_id: this.modelId, loaded: this.loaded, was_resident: this.wasResident };
+    return {
+      model_id: this.modelId,
+      loaded: this.loaded,
+      was_resident: this.wasResident,
+      refused: this.refused,
+      usage_checked: this.usageChecked,
+      in_use_by: this.inUseBy.map((h) => ({
+        kind: h.kind,
+        handle: h.handle,
+        detail: h.detail,
+      })),
+    };
   }
 }

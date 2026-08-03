@@ -20,6 +20,23 @@ import { Badge } from "../ds/Badge";
  * Every state is designed + honest (D142 / don't-fake-gaps): an FFI-free serve
  * lists empty; downloads OFF render an honest-disabled Pull panel with the reason.
  */
+/**
+ * Whether the LAST offload was a refusal for THIS model.
+ *
+ * Scoped to `variables.modelId` deliberately: one mutation object is shared by every
+ * card, so an unscoped `data.refused` would paint the warning on all of them. It reads
+ * the SUCCESS payload, not an error — a refusal is a successful call that evicted
+ * nothing.
+ */
+function refusedFor(
+  offload: ReturnType<typeof useModelLifecycle>["offload"],
+  modelId: string,
+): boolean {
+  return (
+    offload.isSuccess && offload.variables?.modelId === modelId && offload.data?.refused === true
+  );
+}
+
 export function ModelsSection() {
   const { models, unsupported, loading } = useModels();
   const { load, offload } = useModelLifecycle();
@@ -78,7 +95,8 @@ export function ModelsSection() {
                   .filter((mdl) => mdl.engine === engine)
                   .map((mdl) => {
                     const loadingThis = load.isPending && load.variables === mdl.modelId;
-                    const offloadingThis = offload.isPending && offload.variables === mdl.modelId;
+                    const offloadingThis =
+                      offload.isPending && offload.variables?.modelId === mdl.modelId;
                     const activatingThis =
                       setActive.isPending && setActive.variables === mdl.modelId;
                     const busy = loadingThis || offloadingThis;
@@ -86,7 +104,7 @@ export function ModelsSection() {
                     const actionError =
                       load.isError && load.variables === mdl.modelId
                         ? toUiError(load.error)
-                        : offload.isError && offload.variables === mdl.modelId
+                        : offload.isError && offload.variables?.modelId === mdl.modelId
                           ? toUiError(offload.error)
                           : setActive.isError && setActive.variables === mdl.modelId
                             ? toUiError(setActive.error)
@@ -197,7 +215,7 @@ export function ModelsSection() {
                               className="btn-ghost"
                               data-testid="model-offload-btn"
                               disabled={busy}
-                              onClick={() => offload.mutate(mdl.modelId)}
+                              onClick={() => offload.mutate({ modelId: mdl.modelId })}
                             >
                               {offloadingThis ? "Offloading…" : "Offload"}
                             </button>
@@ -221,6 +239,33 @@ export function ModelsSection() {
                           >
                             {actionError.message}
                           </p>
+                        ) : null}
+                        {/* THE IN-USE REFUSAL. The mutation SUCCEEDED and evicted
+                         *  nothing, so this is not an error banner — it names the live
+                         *  work an offload would disrupt and offers the override
+                         *  explicitly. Rendering nothing here would leave the button
+                         *  looking like it silently failed. */}
+                        {refusedFor(offload, mdl.modelId) ? (
+                          <div
+                            className="affordance-off"
+                            data-testid={`model-offload-refused-${mdl.modelId}`}
+                            role="alert"
+                          >
+                            <span className="affordance-off__why">
+                              Still loaded — in use by{" "}
+                              {offload.data?.inUseBy.map((h) => `${h.kind} ${h.handle}`).join(", ")}
+                              . Offloading now would disrupt it.
+                            </span>
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              data-testid={`model-offload-force-${mdl.modelId}`}
+                              disabled={busy}
+                              onClick={() => offload.mutate({ modelId: mdl.modelId, force: true })}
+                            >
+                              Offload anyway
+                            </button>
+                          </div>
                         ) : null}
                       </m.article>
                     );

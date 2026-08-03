@@ -160,6 +160,11 @@ mod branches;
 mod hosted_sandbox;
 #[cfg(feature = "hosted-apps")]
 mod hostsupervisor;
+// The OffloadModel in-use guard's host view: which hosted Apps are live and which
+// model each holds. Rides the same gate — without a supervisor there is nothing to
+// observe, and the RPC then honestly reports `usage_checked = false`.
+#[cfg(feature = "hosted-apps")]
+mod model_usage_host;
 // The Morphic Data Engine (campaign Batch 2): the durable serve-path capture
 // projection (capture.db sidecar folded from the read-only journal handle).
 // Always-on, off-truth-path; FFI-free (rusqlite is already in the closure).

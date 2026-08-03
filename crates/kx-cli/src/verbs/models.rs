@@ -18,8 +18,14 @@ pub enum ModelsCmd {
     List,
     /// `models load <id>` — warm a registered model into RAM.
     Load(String),
-    /// `models offload <id>` — evict a registered model from RAM.
-    Offload(String),
+    /// `models offload <id> [--force]` — evict a registered model from RAM.
+    /// Refused (not an error) when live work holds the model, unless `force`.
+    Offload {
+        /// The registered model id to evict.
+        model_id: String,
+        /// Offload even when the model is in use, disrupting the listed holders.
+        force: bool,
+    },
     /// Model Control v2: `models pull <tag>` (Ollama) or `models pull --url <u>
     /// --sha256 <h>` (direct GGUF) — download + runtime-register a model.
     Pull {
@@ -49,7 +55,7 @@ pub struct ModelsArgs {
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ModelsArgs, CliError> {
     let kw = args.next().ok_or_else(|| {
         CliError::Usage(
-            "models requires a subcommand: list | load <id> | offload <id> | \
+            "models requires a subcommand: list | load <id> | offload <id> [--force] | \
              pull <tag | --url U --sha256 H> | use <id | --clear>"
                 .into(),
         )
@@ -61,6 +67,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ModelsArgs, CliEr
     let mut url: Option<String> = None;
     let mut sha256: Option<String> = None;
     let mut clear = false;
+    let mut force = false;
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--url" => {
@@ -76,6 +83,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ModelsArgs, CliEr
                 );
             }
             "--clear" => clear = true,
+            "--force" => force = true,
             _ if common.try_consume(&flag, &mut args)? => {}
             _ if !flag.starts_with("--") => positionals.push(flag),
             other => return Err(CliError::Usage(format!("unknown flag {other:?}"))),
@@ -84,7 +92,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ModelsArgs, CliEr
     let cmd = match kw.as_str() {
         "list" => ModelsCmd::List,
         "load" => ModelsCmd::Load(one_positional(&positionals, "load")?),
-        "offload" => ModelsCmd::Offload(one_positional(&positionals, "offload")?),
+        "offload" => ModelsCmd::Offload {
+            model_id: one_positional(&positionals, "offload")?,
+            force,
+        },
         "pull" => match (positionals.first(), url) {
             (Some(_), Some(_)) => {
                 return Err(CliError::Usage(
@@ -134,6 +145,21 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ModelsArgs, CliEr
     Ok(ModelsArgs { cmd, common })
 }
 
+/// A refused offload is a NON-ZERO exit (the `pull` deny-by-default precedent): the
+/// requested eviction did not happen, and a script that treats exit 0 as "the model is
+/// gone" must not be told it succeeded. The holder detail is already on stdout; this
+/// carries the exit code and the remedy.
+fn refusal_is_an_error(resp: &proto::OffloadModelResponse) -> Result<(), CliError> {
+    if resp.refused {
+        return Err(CliError::Usage(format!(
+            "{} is in use by {} holder(s); re-run with --force to offload anyway",
+            resp.model_id,
+            resp.in_use_by.len()
+        )));
+    }
+    Ok(())
+}
+
 /// Exactly one positional model id (fail-closed on zero / many).
 fn one_positional(positionals: &[String], verb: &str) -> Result<String, CliError> {
     match positionals {
@@ -170,15 +196,17 @@ pub async fn execute(args: ModelsArgs) -> Result<(), CliError> {
                 .into_inner();
             println!("{}", format::render_load_model(&resp, args.common.json));
         }
-        ModelsCmd::Offload(model_id) => {
+        ModelsCmd::Offload { model_id, force } => {
             let resp = client
                 .offload_model(resolved.request(proto::OffloadModelRequest {
                     model_id: model_id.clone(),
+                    force: *force,
                 })?)
                 .await
                 .map_err(CliError::from_status)?
                 .into_inner();
             println!("{}", format::render_offload_model(&resp, args.common.json));
+            refusal_is_an_error(&resp)?;
         }
         ModelsCmd::Pull { tag, url, sha256 } => {
             let source = if let Some(t) = tag {
@@ -274,7 +302,10 @@ mod tests {
         );
         assert_eq!(
             p(&["offload", "kx-serve:qwen", "--json"]).unwrap().cmd,
-            ModelsCmd::Offload("kx-serve:qwen".into())
+            ModelsCmd::Offload {
+                model_id: "kx-serve:qwen".into(),
+                force: false,
+            }
         );
     }
 

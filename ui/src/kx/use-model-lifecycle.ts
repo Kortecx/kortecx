@@ -31,14 +31,29 @@ export function useModelLifecycle() {
     onSuccess: invalidate,
   });
 
-  const offload = useMutation<ModelLifecycleResult, unknown, string>({
-    mutationFn: async (modelId: string) => {
+  /**
+   * Offload. The IN-USE GUARD means a "successful" call can have done NOTHING: when live
+   * work holds the model the server refuses and returns `refused = true` with the
+   * holders, rather than erroring. Callers must read the RESULT, not just the absence of
+   * an error — treating this mutation's success as "the model is gone" is exactly the
+   * misreading the guard exists to prevent.
+   *
+   * Pass `force` to override, which disrupts the listed holders.
+   */
+  const offload = useMutation<ModelLifecycleResult, unknown, { modelId: string; force?: boolean }>({
+    mutationFn: async ({ modelId, force }) => {
       if (!client) {
         throw new Error("not connected");
       }
-      return client.offloadModel(modelId);
+      return client.offloadModel(modelId, { force });
     },
-    onSuccess: invalidate,
+    // Invalidate only when residency ACTUALLY changed. A refusal changed nothing, and
+    // re-reading the models query would repaint an unchanged row as if something had.
+    onSuccess: (result) => {
+      if (!result.refused) {
+        invalidate();
+      }
+    },
   });
 
   return { load, offload };

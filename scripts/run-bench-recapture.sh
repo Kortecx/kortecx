@@ -111,6 +111,12 @@ ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$EMBED" || {
     exit 1
 }
 echo "arm 2 embedder: $EMBED (present)"
+# ⚠ THIS ARM STAYS ON gemma3:12b DELIBERATELY. `corpus/bench-v1/baseline.ollama.json`
+# records `"model": "gemma3:12b"` — it IS a gemma3 capture, so a recapture on any other
+# model is not a recapture, it is a different experiment wearing the same filename.
+# gemma4:12b is the live-serve model everywhere else; moving this arm to it is a
+# baseline-retirement decision, not a default, and it belongs in the wave that owns the
+# one `suite.json` move.
 KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS="${KX_SERVE_OLLAMA_MODELS:-gemma3:12b,embeddinggemma:latest}" \
 KX_SERVE_EMBED_MODEL="${KX_SERVE_EMBED_MODEL:-embeddinggemma:latest}" \
 KX_SERVE_MEMORY=1 KX_BENCH_UPDATE_BASELINE=1 \

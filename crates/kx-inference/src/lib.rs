@@ -47,6 +47,11 @@ mod backend;
 // `kx_content` (FFI-free leaf).
 mod content;
 mod dispatcher;
+// The MODEL-FAMILY REGISTRY is UNGATED for the same reason `content` is: it is the
+// single table both backends read, and the FFI-free Ollama backend must reach it under
+// `--features serve-engine` WITHOUT `llamacpp` (its dep-wall forbids the FFI crate
+// outright). Pure data + pure string rendering — no model types, no FFI, no deps.
+pub mod model_family;
 // The llama.cpp-backed `LlamaInferenceBackend` + its loaded-model cache live
 // behind the `llamacpp` feature (default-on). Gating the modules — not just the
 // dep — is what lets the crate compile with `--no-default-features` (no native

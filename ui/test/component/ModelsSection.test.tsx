@@ -194,3 +194,84 @@ describe("ModelsSection", () => {
     expect(localStorage.getItem("kortecx.ui.default-model")).toBeNull();
   });
 });
+
+// --- The OffloadModel IN-USE GUARD -------------------------------------------
+//
+// A refusal is a SUCCESSFUL call that evicted nothing. The failure mode being guarded
+// against is the console treating that as done: the button stops spinning, nothing
+// changes, and the operator concludes the control is broken.
+
+describe("ModelsSection — the offload in-use guard", () => {
+  const IN_USE = {
+    modelId: "qwen3-4b",
+    loaded: true,
+    wasResident: true,
+    refused: true,
+    usageChecked: true,
+    inUseBy: [{ kind: "hosted app", handle: "apps/local/desk", detail: "hosted server running" }],
+  };
+
+  it("shows what an offload would disrupt instead of silently doing nothing", async () => {
+    const mock = makeMockClient({
+      listModels: async () => MODELS,
+      offloadModel: async () => IN_USE,
+    });
+    render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
+    await waitFor(() => expect(screen.getAllByTestId("model-card")).toHaveLength(2));
+
+    await userEvent.click(screen.getByTestId("model-offload-btn"));
+
+    const banner = await screen.findByTestId("model-offload-refused-qwen3-4b");
+    // The REASON is text, not a tooltip — a greyed control with a hover-only
+    // explanation reads as "broken", which is the misreading being prevented.
+    expect(banner.textContent).toMatch(/in use by/i);
+    expect(banner.textContent).toMatch(/apps\/local\/desk/);
+    expect(banner.textContent).toMatch(/would disrupt/i);
+    // And the override is offered explicitly rather than left to be guessed at.
+    expect(screen.getByTestId("model-offload-force-qwen3-4b")).toBeInTheDocument();
+  });
+
+  it("the override re-calls with force, and only then evicts", async () => {
+    const calls: Array<{ modelId: string; force?: boolean }> = [];
+    const mock = makeMockClient({
+      listModels: async () => MODELS,
+      offloadModel: async (...args: unknown[]) => {
+        const [modelId, opts] = args as [string, { force?: boolean } | undefined];
+        calls.push({ modelId, force: opts?.force });
+        return opts?.force ? { ...IN_USE, loaded: false, refused: false } : IN_USE;
+      },
+    });
+    render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
+    await waitFor(() => expect(screen.getAllByTestId("model-card")).toHaveLength(2));
+
+    await userEvent.click(screen.getByTestId("model-offload-btn"));
+    await screen.findByTestId("model-offload-refused-qwen3-4b");
+    // The FIRST call must NOT have carried force — otherwise the guard is bypassed by
+    // the very control meant to respect it, and the warning is theatre.
+    expect(calls[0]).toEqual({ modelId: "qwen3-4b", force: undefined });
+
+    await userEvent.click(screen.getByTestId("model-offload-force-qwen3-4b"));
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1]).toEqual({ modelId: "qwen3-4b", force: true });
+  });
+
+  it("a clean offload shows no warning (the banner is not always-on)", async () => {
+    const mock = makeMockClient({
+      listModels: async () => MODELS,
+      offloadModel: async () => ({
+        modelId: "qwen3-4b",
+        loaded: false,
+        wasResident: true,
+        refused: false,
+        usageChecked: true,
+        inUseBy: [],
+      }),
+    });
+    render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
+    await waitFor(() => expect(screen.getAllByTestId("model-card")).toHaveLength(2));
+
+    await userEvent.click(screen.getByTestId("model-offload-btn"));
+    await waitFor(() => expect(mock.offloadModel).toHaveBeenCalled());
+    expect(screen.queryByTestId("model-offload-refused-qwen3-4b")).not.toBeInTheDocument();
+  });
+});

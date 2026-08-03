@@ -167,7 +167,7 @@ fn a_real_model_drives_the_topology_loop() {
         outcome.total
     );
 
-    if let Some(stamp) = std::env::var("KX_RUNSTAMP").ok() {
+    if let Ok(stamp) = std::env::var("KX_RUNSTAMP") {
         if let Ok(ev) = Evidence::open(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
             &stamp,

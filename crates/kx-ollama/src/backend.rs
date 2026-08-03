@@ -566,47 +566,32 @@ impl EmbeddingBackend for OllamaBackend {
 /// A pure function of its inputs so it can be tested without a daemon, and so the
 /// rendered bytes are auditable against the template the model actually declares.
 ///
-/// **The gemma3 arm mirrors the template `/api/show` returns, rather than a tidier
-/// prompt of our own invention.** Measured against a live daemon, `gemma3:12b`
-/// reports:
+/// **The per-family templates live in [`kx_inference::model_family::FAMILIES`]**, which
+/// the in-process backend reads too. They were duplicated here once, and the two copies
+/// disagreed: this crate claimed `gemma3`/`gemma2`/`gemma` by exact match, the other
+/// claimed anything starting `gemma` by prefix and rendered it in GEMMA-4's vocabulary.
+/// Gemma-3 and Gemma-4 share a name stem and share no control tokens, so the two paths
+/// prompted the same model differently. One table is the fix; onboarding a family is now
+/// an entry in it and no code here at all.
 ///
-/// ```text
-/// {{- range $i, $_ := .Messages }}
-/// {{- $last := eq (len (slice $.Messages $i)) 1 }}
-/// {{- if or (eq .Role "user") (eq .Role "system") }}<start_of_turn>user
-/// {{ .Content }}<end_of_turn>
-/// {{ if $last }}<start_of_turn>model
-/// {{ end }}
-/// ```
+/// Each entry mirrors what the model DECLARES rather than a tidier prompt of our own
+/// invention, and the non-obvious details are the ones that bite: Gemma-3 has no system
+/// role (system becomes its OWN `user` turn), while Gemma-4 has one and additionally
+/// opens a thought channel in the generation turn — omit that and the model emits the
+/// channel markers as answer text.
 ///
-/// Two things follow, and both are non-obvious. There is **no system role** — the
-/// template maps `system` onto a `user` turn. And it does so as its OWN turn, not
-/// merged into the user's: a `[system, user]` pair renders as two consecutive
-/// `<start_of_turn>user` blocks. Guessing either detail would have produced a prompt
-/// that looks right and is not what the model was trained on, which is the same class
-/// of error as sending it `ChatML`.
-///
-/// An EMPTY system renders the user turn alone — an empty leading turn is not
-/// something the template would ever emit for an absent message.
+/// `None` remains the fail-safe: an unregistered family renders nothing,
+/// `render_chat_or_chatml` falls back to `ChatML`, and behaviour is unchanged for every
+/// model this table has never heard of.
 fn render_for_family(family: &str, system: &str, user: &str) -> Option<String> {
-    match family {
-        "gemma3" | "gemma2" | "gemma" => {
-            let mut out = String::new();
-            if !system.is_empty() {
-                out.push_str("<start_of_turn>user\n");
-                out.push_str(system);
-                out.push_str("<end_of_turn>\n");
-            }
-            out.push_str("<start_of_turn>user\n");
-            out.push_str(user);
-            out.push_str("<end_of_turn>\n<start_of_turn>model\n");
-            Some(out)
-        }
-        // Unknown / absent ⇒ the caller keeps its ChatML fallback. Adding a family
-        // here is the whole onboarding cost for a new model architecture, and until
-        // a family is added its behaviour is exactly what it is today.
-        _ => None,
-    }
+    // Onboarding a family is a DATA edit in `kx_inference::model_family::FAMILIES` —
+    // this crate holds no per-family knowledge of its own, and cannot drift from the
+    // in-process backend, which reads the same table.
+    Some(
+        kx_inference::model_family::resolve(family)?
+            .template
+            .render_system_user(system, user),
+    )
 }
 
 /// Map [`InferenceParams`] to the Ollama `options` object. Temperature / top-p are
@@ -639,7 +624,7 @@ fn options_from_params(params: &InferenceParams) -> serde_json::Value {
     // runs past the turn boundary (e.g. emitting a trailing `<|im_end|>`). Merged
     // with any recipe-declared stops, deduped. Harmless for non-chat prompts (these
     // are control tokens models do not emit as normal content).
-    let mut stop: Vec<String> = DEFAULT_STOPS.iter().map(|s| (*s).to_string()).collect();
+    let mut stop: Vec<String> = default_stops().iter().map(|s| (*s).to_string()).collect();
     for s in &params.stop_tokens {
         if !stop.contains(s) {
             stop.push(s.clone());
@@ -649,10 +634,29 @@ fn options_from_params(params: &InferenceParams) -> serde_json::Value {
     serde_json::Value::Object(opts)
 }
 
-/// Common assistant-turn-end markers across the chat templates the serve path
-/// renders (`ChatML`, Gemma, `Llama-3`), passed as raw-mode `stop` tokens so a turn
-/// ends cleanly even when the recipe declares no stops.
-const DEFAULT_STOPS: &[&str] = &["<|im_end|>", "<end_of_turn>", "<|eot_id|>"];
+/// Assistant-turn-end markers for the templates the serve path renders, passed as
+/// raw-mode `stop` tokens so a turn ends cleanly even when the recipe declares none.
+///
+/// DERIVED from [`kx_inference::model_family`], so a family added to that table brings
+/// its own terminator with it. Maintaining this list by hand is how a family gets a
+/// correctly-shaped prompt and a run-on completion — Gemma-4's `<turn|>` was missing
+/// here for exactly as long as its template was.
+///
+/// [`EXTRA_STOPS`] carries markers for families the table does not claim, so an
+/// unregistered model dispatched under the `ChatML` fallback still terminates.
+fn default_stops() -> Vec<&'static str> {
+    let mut stops = kx_inference::model_family::all_stop_tokens();
+    for extra in EXTRA_STOPS {
+        if !stops.contains(extra) {
+            stops.push(extra);
+        }
+    }
+    stops
+}
+
+/// Turn-end markers with no registered family: `Llama-3`'s, kept because an
+/// unregistered model still reaches the `ChatML` dispatch and should stop cleanly.
+const EXTRA_STOPS: &[&str] = &["<|eot_id|>"];
 
 /// Map a generate failure: a daemon timeout becomes [`InferenceError::Timeout`]
 /// (the warrant's wall-clock honored), every other class a
@@ -746,6 +750,52 @@ mod tests {
         );
     }
 
+    /// ★ THE INCIDENT. `gemma4:12b` reports `details.family = "gemma4"` (measured
+    /// against the live daemon), which this table did not claim — so a Gemma-4 turn
+    /// fell through to `None` and was dispatched as `ChatML`, a vocabulary Gemma has
+    /// never been trained on, on every turn.
+    ///
+    /// It did not fail loudly, which is why it needs a test rather than a bug report:
+    /// asked a one-line question under the wrong template the model still answers. What
+    /// changes is that it emits its thought-channel markers as CONTENT. Measured, one
+    /// variable — the generation prefix — same seed, same options:
+    ///   with    `"The capital of France is Paris."`
+    ///   without `"<|channel>thought\n<channel|>The capital of France is Paris."`
+    ///
+    /// Gemma-4 and Gemma-3 share a name stem and share NO control tokens, so this is
+    /// deliberately not "add gemma4 to the gemma3 arm" — that would have shipped the
+    /// wrong vocabulary and still passed a smoke test.
+    #[test]
+    fn gemma4_is_rendered_in_its_own_vocabulary_not_chatml() {
+        let out = render_for_family("gemma4", "SYS", "USR")
+            .expect("gemma4 must render a template — an unclaimed family becomes ChatML");
+        assert_eq!(
+            out,
+            "<|turn>system\nSYS<turn|>\n<|turn>user\nUSR<turn|>\n\
+             <|turn>model\n<|channel>thought\n<channel|>"
+        );
+        for chatml in ["<|im_start|>", "<|im_end|>"] {
+            assert!(!out.contains(chatml), "found {chatml:?} in a gemma4 render");
+        }
+        for gemma3 in ["<start_of_turn>", "<end_of_turn>"] {
+            assert!(
+                !out.contains(gemma3),
+                "gemma4 must not inherit gemma3's vocabulary, found {gemma3:?}"
+            );
+        }
+    }
+
+    /// The generation prefix is what suppresses the leaked preamble, so it is asserted
+    /// on its own rather than only inside the byte-for-byte render above.
+    #[test]
+    fn gemma4_opens_the_thought_channel_in_the_generation_turn() {
+        let out = render_for_family("gemma4", "", "USR").expect("gemma4 renders");
+        assert!(
+            out.ends_with("<|turn>model\n<|channel>thought\n<channel|>"),
+            "the generation turn must open the thought channel; got {out:?}"
+        );
+    }
+
     /// The gemma3 arm must reproduce the template the daemon DECLARES, and the two
     /// details that are easy to get wrong are asserted by name: there is no system
     /// role, and the system text is its own `user` turn rather than merged into the
@@ -799,18 +849,29 @@ mod tests {
         assert_eq!(out.matches("<start_of_turn>user").count(), 1);
     }
 
-    /// Every turn end-marker this table can emit must already be in `DEFAULT_STOPS`,
-    /// or generation runs past the turn boundary — `raw:true` means the daemon
-    /// supplies no stops of its own, so the ONLY stops are the ones passed explicitly.
-    /// A future family added to the table without its stop token would produce a
-    /// correctly-shaped prompt and a run-on completion.
+    /// Every turn end-marker any registered family can emit must be a declared stop, or
+    /// generation runs past the turn boundary — `raw:true` means the daemon supplies no
+    /// stops of its own, so the ONLY stops are the ones passed explicitly.
+    ///
+    /// Now iterates the REGISTRY rather than asserting the one family someone
+    /// remembered. Written against `gemma3` alone, this test was green throughout the
+    /// window in which Gemma-4's `<turn|>` was undeclared.
     #[test]
     fn every_rendered_turn_marker_has_a_stop_token() {
-        let out = render_for_family("gemma3", "SYS", "USR").expect("gemma3 is in the table");
-        assert!(
-            out.contains("<end_of_turn>") && DEFAULT_STOPS.contains(&"<end_of_turn>"),
-            "the gemma turn marker must be a declared stop; DEFAULT_STOPS = {DEFAULT_STOPS:?}"
-        );
+        let stops = default_stops();
+        for family in kx_inference::model_family::FAMILIES {
+            let id = family.ids[0];
+            let out = render_for_family(id, "SYS", "USR").expect("a registered family renders");
+            let close = family.template.turn_close;
+            assert!(
+                out.contains(close),
+                "{id}: the render must carry its own terminator {close:?}"
+            );
+            assert!(
+                stops.contains(&close),
+                "{id}: terminator {close:?} is not a declared stop; stops = {stops:?}"
+            );
+        }
     }
 
     #[test]
@@ -922,9 +983,9 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("stop array");
         let stops: Vec<&str> = stop.iter().filter_map(|v| v.as_str()).collect();
-        for marker in DEFAULT_STOPS {
+        for marker in default_stops() {
             assert!(
-                stops.contains(marker),
+                stops.contains(&marker),
                 "default stop {marker} missing: {stops:?}"
             );
         }
