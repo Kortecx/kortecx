@@ -6,6 +6,21 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **The live model test suites now run without a C++ toolchain.** Fifteen test files that drive a
+  real served model were gated on the in-process llama.cpp backend, so they were compiled away
+  entirely on a build that talks to Ollama instead — reporting zero tests rather than reporting
+  that they had been skipped. Forty-seven live tests were affected, including the only coverage of
+  authoring a workflow from a description and of holding a tool call at an approval barrier. They
+  are now gated on the model-serving feature instead, so `cargo test --features serve-engine,hnsw`
+  runs them against Ollama with no llama.cpp build. The llama.cpp arm is unchanged and still needs
+  `--features inference`.
+
+- **New end-to-end coverage for memory decay, grounded retrieval, skills and denied approvals.**
+  A decay sweep is now proven to evict stale memories, spare a recently recalled one, and restore
+  what it tombstoned. A retrieval answer is proven to actually contain what the search returned,
+  rather than only that a search happened. A skill's instructions are proven to change what a live
+  model answers. And a denied approval is proven to leave the withheld action unperformed.
+
 - **Tool arguments are now constrained on the Ollama backend too, not just llama.cpp.** When a
   registered tool declares typed parameters with a closed schema, the runtime already told the
   llama.cpp backend exactly what shape the arguments had to take. Ollama was only told "the

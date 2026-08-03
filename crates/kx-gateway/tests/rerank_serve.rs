@@ -14,10 +14,10 @@
 //!   # Ollama (gemma3:12b; strict whole-response `format`):
 //!   KX_SERVE_OLLAMA=1 KX_SERVE_OLLAMA_MODELS=gemma3:12b,embeddinggemma:latest \
 //!     KX_SERVE_EMBED_MODEL=embeddinggemma:latest KX_SERVE_RAG_LLM_RERANK=1 \
-//!     cargo test -p kx-gateway --features inference,hnsw --test rerank_serve -- --ignored --nocapture
+//!     cargo test -p kx-gateway --features serve-engine,hnsw --test rerank_serve -- --ignored --nocapture
 //! ```
 
-#![cfg(all(feature = "inference", feature = "hnsw"))]
+#![cfg(all(feature = "serve-engine", feature = "hnsw"))]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;

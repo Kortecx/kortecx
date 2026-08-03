@@ -19,12 +19,16 @@
 //! full/leaf id and assert the fire (real-or-fail). Validate on BOTH engines with
 //! Gemma-4: llama.cpp (`KX_SERVE_MODEL_GGUF`) and Ollama (`KX_SERVE_OLLAMA`).
 //!
-//! Gated `#[cfg(feature = "inference")]` AND `#[ignore]`; runtime-skips without a GGUF
+//! Gated `#[cfg(feature = "serve-engine")]` — deliberately NOT `inference`. `inference =
+//! ["serve-engine", ...]` is one-directional, so an `inference`-gated file compiles to
+//! an EMPTY harness under `console,serve-engine,hnsw,hosted-apps,observability`, the
+//! exact set the live proofs build. Gated this way it runs on BOTH builds and picks
+//! its engine at runtime.
 //! (`KX_SERVE_MODEL_GGUF` / `just fetch-gemma-model`), without the bundled `kx-mcp-echo`
 //! (react-auto's provisioning gate), or without the reference connector bin
 //! (`cargo build -p kx-extension-sdk`, or `KX_CONNECTOR_EXAMPLE_PATH`).
 
-#![cfg(feature = "inference")]
+#![cfg(feature = "serve-engine")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;

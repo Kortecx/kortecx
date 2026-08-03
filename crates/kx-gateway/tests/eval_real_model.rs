@@ -6,12 +6,17 @@
 //! Model selection mirrors the rest of the serve e2e suite: a GGUF
 //! (`just fetch-agent-model` / `KX_SERVE_MODEL_GGUF` — Qwen3-0.6B in CI) OR the Ollama
 //! engine (`KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b` — the local Gemma deep
-//! test). Gated `#[cfg(feature = "inference")]` (the FFI links for the GGUF arm; the
-//! Ollama arm is FFI-free but shares the harness) AND `#[ignore]`; runtime-skips with no
+//! test). Gated `#[cfg(feature = "serve-engine")]` AND `#[ignore]`; runtime-skips with no
 //! model. The assertions are LOOSE Tier-B floors — a real run's quality is recorded, not
 //! a hard gate (the deterministic golden gate is `just eval`).
+//!
+//! ⚠ This file used to be `inference`-gated "because the FFI links for the GGUF arm" —
+//! true of the arm, false of the FILE. `inference = ["serve-engine", ...]` is
+//! one-directional, so the gate compiled the whole harness away under
+//! `console,serve-engine,hnsw,hosted-apps,observability` and the FFI-free Ollama arm went
+//! with it. The GGUF arm still needs `--features inference` at RUNTIME; nothing else does.
 
-#![cfg(feature = "inference")]
+#![cfg(feature = "serve-engine")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;

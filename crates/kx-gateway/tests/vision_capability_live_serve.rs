@@ -10,7 +10,7 @@
 //!     -- --ignored --nocapture
 //!
 //! # Ollama (vision tag): `ollama pull gemma3` first, then
-//! KX_SERVE_OLLAMA=1 cargo test -p kx-gateway --features inference \
+//! KX_SERVE_OLLAMA=1 cargo test -p kx-gateway --features serve-engine \
 //!   --test vision_capability_live_serve -- --ignored --nocapture
 //! ```
 //!
@@ -23,7 +23,7 @@
 //! Honest-skips when the serve provisioned NO vision model (no image-capable model is
 //! served) — that path is covered deterministically by the `kx-ollama` mock gate tests.
 
-#![cfg(feature = "inference")]
+#![cfg(feature = "serve-engine")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;
