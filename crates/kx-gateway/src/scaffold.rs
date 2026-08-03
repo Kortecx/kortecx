@@ -44,13 +44,13 @@ use kx_app::AppMode;
 use kx_content::ContentRef;
 use kx_gateway_core::{
     authoring_prompt, body_is_empty, codified_path_allowed, derive_phase, distill_module_api,
-    hosted_authored_role, hosted_entry_path, hosted_template, split_done_pending, strip_code_fence,
-    try_committed_body, AppCatalog, AppScaffolder, BinderError, BranchManifest, BranchStore,
-    ContentReader, ContentWriter, GatewayError as CoreError, HostedFileSource, JournalReader,
-    LockStore, RecipeBinder, RunSubmitter, ScaffoldFile, ScaffoldLane, ScaffoldPhase,
-    ScaffoldStatus, ScaffoldStep, AGENTS_GUIDANCE_PATH, APP_MANIFEST_PLAN_RECIPE_HANDLE,
-    APP_SCAFFOLD_WRITE_RECIPE_HANDLE, CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH,
-    MANIFEST_MARKER_PATH, SKELETON,
+    hosted_authored_role, hosted_entry_path, hosted_required_extras, hosted_template,
+    split_done_pending, strip_code_fence, try_committed_body, AppCatalog, AppScaffolder,
+    BinderError, BranchManifest, BranchStore, ContentReader, ContentWriter,
+    GatewayError as CoreError, HostedFileSource, JournalReader, LockStore, RecipeBinder,
+    RunSubmitter, ScaffoldFile, ScaffoldLane, ScaffoldPhase, ScaffoldStatus, ScaffoldStep,
+    AGENTS_GUIDANCE_PATH, APP_MANIFEST_PLAN_RECIPE_HANDLE, APP_SCAFFOLD_WRITE_RECIPE_HANDLE,
+    CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH, MANIFEST_MARKER_PATH, SKELETON,
 };
 use kx_mote::MoteId;
 
@@ -172,36 +172,62 @@ fn hosted_authored_fallback(framework: &str) -> Vec<ManifestFile> {
         .collect()
 }
 
-/// Guarantee the framework's ENTRY component is in the planned set, returning
-/// `(files, injected)`.
+/// Guarantee every file the hosted contract REQUIRES is in the planned set, returning
+/// `(files, injected_paths)`.
 ///
-/// The hosted planner is TOLD it must emit the entry (`manifest::framework_contract`), but
-/// that is prompt text and `decode_manifest` never checked it. A plan that leaves it out
-/// runs to completion, and `materialize` then writes the template's placeholder body for
-/// that path — so the App serves the framework starter page under the user's own name, with
-/// nothing on any surface reporting a problem.
+/// The hosted planner is TOLD it must emit the entry, a stylesheet the entry imports, and a
+/// test (`manifest::framework_contract`) — but that is prompt text, and prompt text is a
+/// request. `decode_manifest` checks the envelope, the caps and the paths, and has no
+/// concept of a REQUIRED path at all. So each of the three could simply be absent:
 ///
-/// Injected FIRST, because the entry is the file every sibling is written to fit: the write
-/// loop carries the most recent siblings forward as coherence context, and the entry is the
-/// one that names them. The template's own role text is reused so an injected file is
-/// authored to exactly the contract a planned one would have been.
-fn ensure_entry_planned(framework: &str, files: Vec<ManifestFile>) -> (Vec<ManifestFile>, bool) {
+/// - a missing ENTRY runs to completion and `materialize` writes the template's placeholder
+///   body for that path, serving the framework starter page under the user's own App name
+///   with nothing on any surface reporting a problem;
+/// - a missing STYLESHEET is worse, because it is invisible: the project compiles, the type
+///   check passes, the app serves, and the page renders unstyled. That is the shape the
+///   incident took — of its three defects only one broke a build, and a correct import would
+///   have shipped an app that passed every gate and looked broken to the only person who
+///   would notice.
+///
+/// Injection rather than refusal: refusing the whole scaffold over a missing test file costs
+/// the user everything the model got right, and the entry precedent already chose injection.
+/// The template's own role text is reused where there is one, so an injected file is authored
+/// to exactly the contract a planned one would have been.
+///
+/// The entry goes FIRST (unchanged), the extras LAST — the stylesheet is written after the
+/// components that reference its class names, so it can define exactly those.
+fn ensure_required_planned(
+    framework: &str,
+    files: Vec<ManifestFile>,
+) -> (Vec<ManifestFile>, Vec<String>) {
+    let mut injected: Vec<String> = Vec::new();
+    let mut out = Vec::with_capacity(files.len() + 3);
+
     let entry = hosted_entry_path(framework);
-    if files.iter().any(|f| f.path == entry) {
-        return (files, false);
+    if !files.iter().any(|f| f.path == entry) {
+        // `None` is unreachable for the three shipped templates (pinned by
+        // `entry_path_is_the_file_the_static_entry_actually_imports`); degrade OPEN rather
+        // than refuse a scaffold.
+        if let Some(role) = hosted_authored_role(framework, entry) {
+            out.push(ManifestFile {
+                path: entry.to_string(),
+                role: role.to_string(),
+            });
+            injected.push(entry.to_string());
+        }
     }
-    let Some(role) = hosted_authored_role(framework, entry) else {
-        // Unreachable for the three shipped templates (pinned by `entry_path_is_the_file_
-        // the_static_entry_actually_imports`); degrade OPEN rather than refuse a scaffold.
-        return (files, false);
-    };
-    let mut with_entry = Vec::with_capacity(files.len() + 1);
-    with_entry.push(ManifestFile {
-        path: entry.to_string(),
-        role: role.to_string(),
-    });
-    with_entry.extend(files);
-    (with_entry, true)
+    out.extend(files);
+
+    for (path, role) in hosted_required_extras(framework) {
+        if !out.iter().any(|f| f.path == *path) {
+            out.push(ManifestFile {
+                path: (*path).to_string(),
+                role: (*role).to_string(),
+            });
+            injected.push((*path).to_string());
+        }
+    }
+    (out, injected)
 }
 
 /// Advisory in-memory progress for one branch's scaffold (the durable truth is the
@@ -794,22 +820,23 @@ impl HostScaffolder {
             .await
         {
             Ok((files, manifest_ref)) => {
-                // The framework contract TELLS the planner it must emit the entry component
-                // (`framework_contract` in `manifest.rs`) — as prompt text, which nothing
-                // checked. A plan that omits it still scaffolds "successfully", and then the
-                // supervisor writes the template's own placeholder body for that path and
-                // serves it: the starter page, under the user's App name, with no error
-                // anywhere. Make the contract true instead of merely requested.
-                let (files, injected) = ensure_entry_planned(framework, files);
+                // The framework contract TELLS the planner it must emit the entry component,
+                // a stylesheet and a test (`framework_contract` in `manifest.rs`) — as prompt
+                // text, which nothing checked. A plan that omits any of them still scaffolds
+                // "successfully": a missing entry serves the template's placeholder page under
+                // the user's App name, and a missing stylesheet compiles, type-checks and
+                // renders unstyled with no error anywhere. Make the contract true instead of
+                // merely requested.
+                let (files, injected) = ensure_required_planned(framework, files);
                 // Persist the set we will ACTUALLY write. The planner's committed bytes are
-                // the right marker only when they needed no correction — if we injected the
-                // entry and then stored the raw bytes, a resume would read back the plan
-                // WITHOUT it and reintroduce the bug on the second run.
-                if injected {
+                // the right marker only when they needed no correction — if we injected a
+                // required file and then stored the raw bytes, a resume would read back the
+                // plan WITHOUT it and reintroduce the bug on the second run.
+                if !injected.is_empty() {
                     tracing::info!(
                         branch = %branch,
-                        entry = %hosted_entry_path(framework),
-                        "the plan omitted the framework entry component; injected it"
+                        injected = %injected.join(", "),
+                        "the plan omitted required file(s); injected them"
                     );
                     self.persist_manifest_marker(principal, branch, &files);
                 } else if let Err(e) =
@@ -1566,53 +1593,108 @@ mod tests {
     }
 
     #[test]
-    fn ensure_entry_planned_injects_a_missing_entry_first() {
+    fn ensure_required_planned_injects_a_missing_entry_first() {
         // The planner IS told to emit src/App.tsx, but that is prompt text — a plan that
         // drops it used to scaffold "successfully" and then serve the starter page.
         let (files, injected) =
-            ensure_entry_planned("vite_react", vec![f("src/components/Card.tsx")]);
-        assert!(injected);
+            ensure_required_planned("vite_react", vec![f("src/components/Card.tsx")]);
+        assert!(injected.contains(&"src/App.tsx".to_string()));
         assert_eq!(files[0].path, "src/App.tsx");
-        assert_eq!(files.len(), 2);
         // The injected file carries the TEMPLATE's own role, so it is authored to exactly
         // the contract a planned entry would have been.
         assert_eq!(
             files[0].role,
             hosted_authored_role("vite_react", "src/App.tsx").unwrap()
         );
-        // The planner's own files survive, in order.
+        // The planner's own files survive, in order, immediately after the entry.
         assert_eq!(files[1].path, "src/components/Card.tsx");
     }
 
     #[test]
-    fn ensure_entry_planned_leaves_a_complete_plan_untouched() {
+    fn ensure_required_planned_leaves_a_complete_plan_untouched() {
         // No injection ⇒ the caller keeps persisting the planner's committed BYTES as the
-        // marker, so a resume replays exactly what the model said.
-        let plan = vec![f("src/App.tsx"), f("src/components/Card.tsx")];
-        let (files, injected) = ensure_entry_planned("vite_react", plan.clone());
-        assert!(!injected);
+        // marker, so a resume replays exactly what the model said. "Complete" now means the
+        // entry AND the two files the contract has always asked for — the intent of this
+        // test is unchanged, the definition of complete is what widened.
+        let plan = vec![
+            f("src/App.tsx"),
+            f("src/components/Card.tsx"),
+            f("src/App.css"),
+            f("src/App.test.tsx"),
+        ];
+        let (files, injected) = ensure_required_planned("vite_react", plan.clone());
+        assert!(injected.is_empty(), "injected {injected:?}");
         assert_eq!(files, plan);
     }
 
     #[test]
-    fn ensure_entry_planned_injects_the_right_entry_per_framework() {
+    fn ensure_required_planned_injects_the_right_entry_per_framework() {
         for (fw, entry) in [
             ("next_js", "app/page.tsx"),
             ("svelte", "src/App.svelte"),
             ("auto", "src/App.tsx"),
         ] {
-            let (files, injected) = ensure_entry_planned(fw, vec![f("src/other.ts")]);
-            assert!(injected, "{fw}");
+            let (files, injected) = ensure_required_planned(fw, vec![f("src/other.ts")]);
+            assert!(injected.contains(&entry.to_string()), "{fw}");
             assert_eq!(files[0].path, entry, "{fw}");
         }
-        // A plan that already names the framework's OWN entry is complete, even though it
-        // is not the Vite one.
-        let (_, injected) = ensure_entry_planned("next_js", vec![f("app/page.tsx")]);
-        assert!(!injected);
+        // A plan that already names the framework's OWN entry does not get a second one.
+        let (_, injected) = ensure_required_planned("next_js", vec![f("app/page.tsx")]);
+        assert!(!injected.contains(&"app/page.tsx".to_string()));
         // ...and naming a DIFFERENT framework's entry does not satisfy it.
-        let (files, injected) = ensure_entry_planned("next_js", vec![f("src/App.tsx")]);
-        assert!(injected);
+        let (files, injected) = ensure_required_planned("next_js", vec![f("src/App.tsx")]);
+        assert!(injected.contains(&"app/page.tsx".to_string()));
         assert_eq!(files[0].path, "app/page.tsx");
+    }
+
+    /// ★ The half of the contract that was pure prose. The planner is told to emit "a
+    /// stylesheet the page imports" and a test; nothing checked either, and a plan that
+    /// omits the stylesheet compiles, type-checks, serves, and renders unstyled — the one
+    /// defect shape no gate in the system can see.
+    #[test]
+    fn ensure_required_planned_injects_the_stylesheet_and_the_test() {
+        let (files, injected) = ensure_required_planned(
+            "vite_react",
+            vec![f("src/App.tsx"), f("src/components/Card.tsx")],
+        );
+        assert!(
+            injected.contains(&"src/App.css".to_string()),
+            "the stylesheet the entry imports must be planned, not merely requested: {injected:?}"
+        );
+        assert!(
+            injected.contains(&"src/App.test.tsx".to_string()),
+            "the test the contract asks for must be planned: {injected:?}"
+        );
+        // Appended AFTER the model's own files: the stylesheet is authored last so it can
+        // define exactly the class names the components it follows referenced.
+        let paths: Vec<&str> = files.iter().map(|x| x.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "src/App.tsx",
+                "src/components/Card.tsx",
+                "src/App.css",
+                "src/App.test.tsx"
+            ]
+        );
+    }
+
+    #[test]
+    fn ensure_required_planned_uses_each_frameworks_own_required_set() {
+        // Next.js wants a CSS MODULE, not a plain stylesheet.
+        let (_, injected) = ensure_required_planned("next_js", vec![f("app/page.tsx")]);
+        assert!(injected.contains(&"app/page.module.css".to_string()));
+        assert!(injected.contains(&"app/page.test.tsx".to_string()));
+
+        // Svelte has NO separate stylesheet on purpose — its contract puts each component's
+        // styles in that component's own <style> block, so requiring a file would be
+        // requiring one the contract never asked for.
+        let (_, injected) = ensure_required_planned("svelte", vec![f("src/App.svelte")]);
+        assert!(
+            !injected.iter().any(|p| p.contains(".css")),
+            "svelte must not gain a stylesheet it never asked for: {injected:?}"
+        );
+        assert!(injected.contains(&"src/App.test.ts".to_string()));
     }
 
     /// THE LIVE FINDING, pinned. A codified scaffold produces both files, and the model can

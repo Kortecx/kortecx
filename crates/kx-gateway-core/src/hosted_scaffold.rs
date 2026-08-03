@@ -677,6 +677,156 @@ pub fn authored_role(framework: &str, path: &str) -> Option<&'static str> {
     })
 }
 
+/// The npm package whose MAJOR version a hosted project of this framework is written
+/// against — the one an API mistake is most likely to be made about.
+fn primary_package(framework: &str) -> &'static str {
+    match framework {
+        "next_js" => "next",
+        "svelte" => "svelte",
+        _ => "react",
+    }
+}
+
+/// The MAJOR version of the framework's primary npm package, read out of that framework
+/// template's OWN `package.json` body.
+///
+/// DERIVED rather than written here as a second constant, for exactly the reason
+/// [`SDK_UNPINNED_RANGE`] records: a version repeated in a `&'static str` is a copy that
+/// disagrees with its source at the first bump. A generation contract naming the WRONG major
+/// is worse than one naming none — the model will believe it, and the resulting import
+/// resolves against a package that is not installed.
+///
+/// A pure string scan because this crate's `serde_json` is dev-only, so the library cannot
+/// parse the body. [`with_sdk_version`] reads the same file the same way.
+///
+/// `None` when the dependency is absent or its range carries no leading digits; the caller
+/// then states no version at all rather than a guessed one.
+#[must_use]
+pub fn framework_major(framework: &str) -> Option<&'static str> {
+    let pkg = primary_package(framework);
+    let body = template(framework).iter().find_map(|f| match f.source {
+        FileSource::Static(b) if f.path == "package.json" => Some(b),
+        _ => None,
+    })?;
+    let key = format!("\"{pkg}\": \"");
+    let start = body.find(&key)? + key.len();
+    let rest = &body[start..];
+    let range = &rest[..rest.find('"')?];
+    // Strip a leading range operator (`^`, `~`, `>=`) then take the leading digits.
+    let digits = range.trim_start_matches(['^', '~', '>', '=', ' ']);
+    let len = digits
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(digits.len());
+    (len > 0).then(|| &digits[..len])
+}
+
+/// The files a hosted project must contain BEYOND the template's own set and the entry —
+/// the stylesheet the entry imports, and a test — each paired with the authoring role it is
+/// written to when the planner leaves it out.
+///
+/// The planner is TOLD to emit both; that is prompt text, and prompt text is a request. This
+/// is the value that makes it a requirement, the same move [`entry_path`] already makes for
+/// the entry component.
+///
+/// Svelte declares no stylesheet on purpose: its contract asks for each component's styles in
+/// that component's own `<style>` block, so there is no separate file to require.
+#[must_use]
+pub fn required_extras(framework: &str) -> &'static [(&'static str, &'static str)] {
+    match framework {
+        "next_js" => &[
+            (
+                "app/page.module.css",
+                "the CSS module `app/page.module.css` that `app/page.tsx` imports. Plain CSS \
+                 defining the class names the page references through `styles.<name>`; a layout \
+                 and type scale that make the page look finished.",
+            ),
+            (
+                "app/page.test.tsx",
+                "a test for the page component that asserts what the page actually renders.",
+            ),
+        ],
+        "svelte" => &[(
+            "src/App.test.ts",
+            "a test for the root component that asserts what it actually renders.",
+        )],
+        _ => &[
+            (
+                "src/App.css",
+                "the stylesheet `src/App.css` that `src/App.tsx` imports. Plain CSS defining the \
+                 class names the components reference; a layout and type scale that make the page \
+                 look finished.",
+            ),
+            (
+                "src/App.test.tsx",
+                "a test for the root component that asserts what it actually renders.",
+            ),
+        ],
+    }
+}
+
+/// The framework's RUNTIME rules — the four things a generating model otherwise supplies
+/// from memory: the version it is coding against, the one import most likely to be wrong
+/// shown in its correct form, a POSITIVE instruction for the axis the dependency list only
+/// forbids, and the constraints of the sandbox the code will actually run in.
+///
+/// ONE definition with two consumers, and that is the point. It rides BOTH the manifest-plan
+/// directive (which chooses the file set) and [`crate::scaffold::authoring_prompt`] (which
+/// writes each file's body). A contract that reaches only the planner constrains which files
+/// exist and nothing about what is in them — and every defect this text exists to prevent is
+/// a defect in a file's CONTENTS.
+///
+/// The closing sentence states the consequence, not just the rule: a remote fetch here does
+/// not fail loudly, so a model that has no reason to avoid one will reach for it.
+#[must_use]
+pub fn framework_runtime_rules(framework: &str) -> String {
+    let pkg = primary_package(framework);
+    let version = match framework_major(framework) {
+        Some(major) => format!(
+            "Write against `{pkg}` {major} — the major version this project installs. Do not use \
+             an API from a different major, and do not import a package the project does not \
+             declare.\n"
+        ),
+        None => String::new(),
+    };
+    let styling = match framework {
+        "svelte" => {
+            "Styling: each component's CSS goes in that component's own `<style>` block, \
+                     as plain CSS with class names you define there. Utility-class frameworks \
+                     (Tailwind and similar) are NOT installed, so a utility class name styles \
+                     nothing.\n"
+        }
+        "next_js" => {
+            "Styling: the page's CSS goes in `app/page.module.css`, imported as \
+             `import styles from \"./page.module.css\";` and referenced as `styles.<name>`. When \
+             you combine it with another class name, join the two with a SPACE — \
+             `` className={`${styles.card} ${styles.wide}`} `` — because concatenating them \
+             directly produces one unknown class and destroys both. Plain CSS with class names \
+             you define; utility-class frameworks (Tailwind and similar) are NOT installed, so a \
+             utility class name styles nothing.\n"
+        }
+        _ => {
+            "Styling: the app's CSS goes in `src/App.css`, imported as `import \"./App.css\";` \
+              and referenced by the class names you define there. When you combine two class \
+              names, join them with a SPACE. Plain CSS; utility-class frameworks (Tailwind and \
+              similar) are NOT installed, so a utility class name styles nothing.\n"
+        }
+    };
+    let font = if is_next(framework) {
+        "Do NOT import from `next/font/*` or `@next/font/*`: those DOWNLOAD the font at build \
+         time, which this runtime refuses.\n"
+    } else {
+        ""
+    };
+    format!(
+        "{version}{styling}{font}Runtime: this app runs in a sandbox with LOOPBACK-ONLY network \
+         access. Nothing may be fetched from the public internet at build time or at run time — \
+         no web-font API, no CDN script or stylesheet, no remote image or icon. Use the system \
+         font stack (`system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif`) and locally \
+         defined assets only. A blocked fetch does not fail loudly here: it degrades silently, \
+         and the page renders wrong with nothing reporting it."
+    )
+}
+
 /// The dev-server command for `framework`: `npm run dev -- --port <p>` for both, but the
 /// port flag differs (Vite `--port`, Next `-p`). Returns the args AFTER `npm`.
 #[must_use]
@@ -1053,5 +1203,112 @@ mod tests {
             dev_command_args("svelte", 4321),
             vec!["run", "dev", "--", "--port", "4321"]
         );
+    }
+
+    /// ★ THE DRIFT GUARD. The whole point of deriving the major instead of writing it down
+    /// is that a written-down version disagrees with its source at the first bump — and a
+    /// contract naming the WRONG major is worse than one naming none, because the model
+    /// believes it. This asserts the derivation against the template's own declared range,
+    /// so bumping the template and forgetting the prompt is a RED test rather than a silent
+    /// instruction to code against a version that is not installed.
+    #[test]
+    fn the_stated_major_is_the_one_the_template_actually_installs() {
+        for (fw, pkg) in [
+            ("vite_react", "react"),
+            ("next_js", "next"),
+            ("svelte", "svelte"),
+        ] {
+            let pkg_json = template(fw)
+                .iter()
+                .find_map(|f| match f.source {
+                    FileSource::Static(b) if f.path == "package.json" => Some(b),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{fw} has a package.json"));
+            let v: serde_json::Value = serde_json::from_str(pkg_json).unwrap();
+            let declared = v["dependencies"][pkg]
+                .as_str()
+                .or_else(|| v["devDependencies"][pkg].as_str())
+                .unwrap_or_else(|| panic!("{fw} declares {pkg}"));
+            let expect = declared
+                .trim_start_matches(['^', '~', '>', '=', ' '])
+                .split('.')
+                .next()
+                .unwrap();
+            assert_eq!(
+                framework_major(fw),
+                Some(expect),
+                "{fw}: the contract would tell the model {:?} while the project installs {declared:?}",
+                framework_major(fw),
+            );
+        }
+        // An unknown label resolves to the Vite-React template, so it gets React's major.
+        assert_eq!(framework_major("auto"), framework_major("vite_react"));
+    }
+
+    /// The four things a model otherwise supplies from memory. Each assertion names the
+    /// defect it exists to prevent — all four were observed on one real scaffold.
+    #[test]
+    fn the_runtime_rules_pin_version_styling_and_the_sandbox() {
+        for fw in ["vite_react", "next_js", "svelte"] {
+            let r = framework_runtime_rules(fw);
+            // (1) the VERSION it is coding against
+            assert!(
+                r.contains(framework_major(fw).unwrap()),
+                "{fw}: states no major version"
+            );
+            // (2)+(3) a POSITIVE styling instruction, not only a forbidden dependency list
+            assert!(
+                r.contains("Styling:"),
+                "{fw}: no positive styling instruction"
+            );
+            assert!(
+                r.contains("NOT installed"),
+                "{fw}: does not say the utility-class vocabulary is unavailable"
+            );
+            // (4) the RUNTIME's constraints, not just the project's dependencies
+            assert!(
+                r.contains("LOOPBACK-ONLY"),
+                "{fw}: never states the sandbox denies egress"
+            );
+            assert!(
+                r.contains("degrades silently"),
+                "{fw}: states the rule without the consequence that makes it stick"
+            );
+        }
+        // The one import the incident actually got wrong is named, in the one arm where the
+        // API exists at all.
+        assert!(framework_runtime_rules("next_js").contains("next/font"));
+        assert!(!framework_runtime_rules("svelte").contains("next/font"));
+
+        // An EXAMPLE beats prose: the stylesheet import is shown, not merely described.
+        assert!(framework_runtime_rules("vite_react").contains(r#"import "./App.css";"#));
+        assert!(framework_runtime_rules("next_js")
+            .contains(r#"import styles from "./page.module.css";"#));
+    }
+
+    /// Every required extra is a path the framework's own contract already asks for, and
+    /// Svelte's omission of a stylesheet is deliberate rather than an oversight.
+    #[test]
+    fn required_extras_match_each_frameworks_own_shape() {
+        let paths =
+            |fw| -> Vec<&'static str> { required_extras(fw).iter().map(|(p, _)| *p).collect() };
+        assert_eq!(paths("vite_react"), vec!["src/App.css", "src/App.test.tsx"]);
+        assert_eq!(
+            paths("next_js"),
+            vec!["app/page.module.css", "app/page.test.tsx"]
+        );
+        assert_eq!(paths("svelte"), vec!["src/App.test.ts"]);
+        // A required extra must never collide with a template-owned path, or the write loop
+        // would author a file the supervisor also writes statically.
+        for fw in ["vite_react", "next_js", "svelte"] {
+            for (p, role) in required_extras(fw) {
+                assert!(
+                    !template_paths(fw).contains(p),
+                    "{fw}: {p} is template-owned"
+                );
+                assert!(!role.trim().is_empty(), "{fw}: {p} has no authoring role");
+            }
+        }
     }
 }

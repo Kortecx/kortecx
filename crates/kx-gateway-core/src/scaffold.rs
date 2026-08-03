@@ -18,6 +18,7 @@ use kx_mote::MoteId;
 use kx_projection::MoteState;
 
 use crate::error::{internal, GatewayError};
+use crate::hosted_scaffold::framework_runtime_rules;
 use crate::reader::{ContentReader, JournalReader};
 
 /// The recipe handle the host seeds for the scaffold write step (a single Pure
@@ -934,10 +935,12 @@ pub fn authoring_prompt(
                  App goal: {goal}\n\n\
                  {guidance}\
                  Write the COMPLETE, production-quality contents of the file `{path}` — {role}. \
-                 {tree}{apis}{siblings}\
+                 {tree}{apis}{siblings}\n\n\
+                 {rules}\n\n\
                  Return ONLY the file body — no commentary, no explanation, and no markdown code \
                  fences.",
                 label = framework_label(fw),
+                rules = framework_runtime_rules(fw),
             )
         }
         // Scheduled CODIFIED lane — the two files the runtime PARSES get a strict-shape
@@ -1219,6 +1222,57 @@ mod tests {
         assert!(p.contains("src/components/Card.tsx")); // the full set is in the prompt
         assert!(p.contains("Import")); // import-siblings directive (kills the monolith)
         assert!(p.contains("no markdown code fences"));
+    }
+
+    /// ★ THE PROMPT THAT WRITES THE CODE. The framework contract in `kx-gateway::manifest`
+    /// reaches the PLANNER, which chooses the file set — and this is the prompt that decides
+    /// what goes IN each file. It named the framework and nothing else, so every content
+    /// defect on the incident (an import from the previous major, a page written in a
+    /// utility-CSS vocabulary the project never installs, a build-time font download the
+    /// sandbox refuses) was authored under a prompt that gave the model no reason not to.
+    #[test]
+    fn authoring_prompt_hosted_carries_the_runtime_rules() {
+        for (fw, major_marker) in [("vite_react", "react"), ("next_js", "next")] {
+            let p = authoring_prompt(
+                "app/page.tsx",
+                "the page",
+                "a landing page",
+                ScaffoldLane::Hosted(fw),
+                &["app/page.tsx"],
+                false,
+                &[],
+                None,
+            );
+            assert!(
+                p.contains(major_marker) && p.contains("major version this project installs"),
+                "{fw}: the authoring prompt states no version to code against"
+            );
+            assert!(
+                p.contains("Styling:"),
+                "{fw}: the authoring prompt gives no positive styling instruction"
+            );
+            assert!(
+                p.contains("LOOPBACK-ONLY"),
+                "{fw}: the authoring prompt never states the runtime denies egress"
+            );
+            // The format instruction must still be LAST — the rules are constraints, not a
+            // new output contract.
+            assert!(p.trim_end().ends_with("no markdown code fences."));
+        }
+        // The scheduled lanes are untouched: they author markdown and config for a runtime
+        // with no bundler, no stylesheet and no npm at all.
+        let sched = authoring_prompt(
+            "skills/main.md",
+            "the primary skill",
+            "a triage bot",
+            ScaffoldLane::Contextual,
+            &["skills/main.md"],
+            false,
+            &[],
+            None,
+        );
+        assert!(!sched.contains("LOOPBACK-ONLY"));
+        assert!(!sched.contains("Styling:"));
     }
 
     #[test]

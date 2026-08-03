@@ -27,15 +27,21 @@
   --border-strong: rgba(13, 13, 13, 0.26);
   --focus: #f04500;
 
-  /* semantic + accent palette — monochrome (dark grays, AA on light surfaces) */
-  --success: #3f3f3f;
-  --warning: #555555;
-  --error: #444444;
-  --info: #5a5a5a;
-  --teal: #525252;
-  --violet: #4c4c4c;
-  --rose: #464646;
-  --indigo: #585858;
+  /* Semantic roles carry MEANING — severity, never decoration. Muted hues chosen to
+   * sit beside the #f04500 brand rather than compete with it; every value here was
+   * searched against the pairs in test/unit/theme-contrast.test.ts rather than picked
+   * by eye, so the AA lock holds with margin (≥5.0 on --surface, ≥4.4 on --bg).
+   * The four CATEGORICAL accents below stay greys-with-a-tint: they separate kinds,
+   * not severities, and colouring them would dilute the four that mean something.
+   * Hue is never the only carrier — every state pairs its tone with an icon or label. */
+  --success: #267e41;
+  --warning: #96650b;
+  --error: #c73c48;
+  --info: #2a73af;
+  --teal: #667070;
+  --violet: #716d78;
+  --rose: #776c70;
+  --indigo: #6d6e78;
   --teal-dim: rgba(128, 128, 128, 0.08);
   --violet-dim: rgba(128, 128, 128, 0.08);
   --rose-dim: rgba(128, 128, 128, 0.08);
@@ -70,29 +76,33 @@
   --backdrop-color: rgba(13, 13, 13, 0.32);
   --scrim-color: rgba(13, 13, 13, 0.04);
 
-  /* Mote state tones — monochrome (distinct dark-gray tiers; each ≥4.5:1 as text
-   * on white AND under white pill text) */
-  --t-pending: #5a5a5a;
-  --t-scheduled: #555555;
-  --t-committed: #3f3f3f;
-  --t-failed: #444444;
-  --t-repudiated: #525252;
-  --t-inconsistent: #4c4c4c;
-  --t-unknown: #606060;
+  /* Mote state tones — MAPPED onto the semantic roles above, because a run's state IS a
+   * severity: committed reads as success, failed as danger, repudiated as warning. Seven
+   * dark-gray tiers were seven things you had to already know; this is readable at a
+   * glance. Each ≥4.5:1 as text on white AND under white pill text. */
+  --t-pending: #6a6f74;
+  --t-scheduled: #2a73af;
+  --t-committed: #267e41;
+  --t-failed: #c73c48;
+  --t-repudiated: #96650b;
+  --t-inconsistent: #716d78;
+  --t-unknown: #6f6f6f;
 
-  /* nd_class tones — monochrome */
-  --t-pure: #4f4f4f;
-  --t-read-only-nondet: #484848;
-  --t-world-mutating: #414141;
+  /* nd_class tones — a RISK LADDER, so it reads as one: inert → reads the world →
+   * mutates it. */
+  --t-pure: #667070;
+  --t-read-only-nondet: #2a73af;
+  --t-world-mutating: #96650b;
 
-  /* notice tones — monochrome */
-  --n-retry: #555555;
-  --n-reauth: #5a5a5a;
-  --n-forbidden: #444444;
-  --n-bad-input: #525252;
-  --n-not-wired: #606060;
-  --n-not-found: #606060;
-  --n-generic: #444444;
+  /* notice tones — the same four roles, so a notice's colour means what it does
+   * everywhere else in the console */
+  --n-retry: #96650b;
+  --n-reauth: #2a73af;
+  --n-forbidden: #c73c48;
+  --n-bad-input: #96650b;
+  --n-not-wired: #6f6f6f;
+  --n-not-found: #6f6f6f;
+  --n-generic: #6f6f6f;
 }
 
 /* ===========================================================================
@@ -126,14 +136,16 @@
   --border-strong: rgba(244, 244, 245, 0.3);
   --focus: #f04500;
 
-  --success: #ededed;
-  --warning: #d6d6d6;
-  --error: #e8e8e8;
-  --info: #bebebe;
-  --teal: #c2c2c2;
-  --violet: #cccccc;
-  --rose: #e0e0e0;
-  --indigo: #b0b0b0;
+  /* The same four roles, lifted for a dark surface (the dark palette holds the FULL
+   * ≥4.5 bar on every audited pair, including the near-black --pill-fg over each tone). */
+  --success: #3a9054;
+  --warning: #a87619;
+  --error: #da4e5b;
+  --info: #4385ba;
+  --teal: #768282;
+  --violet: #827d8a;
+  --rose: #887c81;
+  --indigo: #7d7e8a;
   --teal-dim: rgba(128, 128, 128, 0.12);
   --violet-dim: rgba(128, 128, 128, 0.12);
   --rose-dim: rgba(128, 128, 128, 0.12);
@@ -146,29 +158,29 @@
   --backdrop-color: rgba(0, 0, 0, 0.55);
   --scrim-color: rgba(0, 0, 0, 0.3);
 
-  /* Mote state tones — monochrome (distinct light-gray tiers; each ≥4.5:1 as text
-   * on --bg/--surface AND under the dark --pill-fg pill text). */
-  --t-pending: #aeaeae;
-  --t-scheduled: #d6d6d6;
-  --t-committed: #ededed;
-  --t-failed: #e8e8e8;
-  --t-repudiated: #c0c0c0;
-  --t-inconsistent: #cccccc;
-  --t-unknown: #9e9e9e;
+  /* Mote state tones — the same semantic mapping as light; each ≥4.5:1 as text on
+   * --bg/--surface AND under the dark --pill-fg pill text. */
+  --t-pending: #7a8086;
+  --t-scheduled: #4385ba;
+  --t-committed: #3a9054;
+  --t-failed: #da4e5b;
+  --t-repudiated: #a87619;
+  --t-inconsistent: #827d8a;
+  --t-unknown: #808080;
 
-  /* nd_class tones — monochrome */
-  --t-pure: #cacaca;
-  --t-read-only-nondet: #b6b6b6;
-  --t-world-mutating: #e0e0e0;
+  /* nd_class tones — the risk ladder */
+  --t-pure: #768282;
+  --t-read-only-nondet: #4385ba;
+  --t-world-mutating: #a87619;
 
-  /* notice tones — monochrome */
-  --n-retry: #d6d6d6;
-  --n-reauth: #bebebe;
-  --n-forbidden: #e8e8e8;
-  --n-bad-input: #c0c0c0;
-  --n-not-wired: #9e9e9e;
-  --n-not-found: #9e9e9e;
-  --n-generic: #e8e8e8;
+  /* notice tones — the same four roles */
+  --n-retry: #a87619;
+  --n-reauth: #4385ba;
+  --n-forbidden: #da4e5b;
+  --n-bad-input: #a87619;
+  --n-not-wired: #808080;
+  --n-not-found: #808080;
+  --n-generic: #808080;
 }
 
 * {
@@ -897,6 +909,40 @@ button:disabled {
 .iconbtn--disabled:hover {
   background: transparent;
   color: var(--fg-muted);
+}
+
+/* A control that is UNAVAILABLE, carrying its reason as text rather than as a tooltip.
+ * A greyed icon alone reads as absence — the operator concludes the feature does not
+ * exist rather than that it is switched off, and goes looking in the wrong place. The
+ * icon is muted; the reason is not, because the reason is the whole point. */
+.affordance-off {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elev);
+  color: var(--text-3);
+  cursor: not-allowed;
+  white-space: nowrap;
+}
+.affordance-off > svg {
+  opacity: 0.55;
+  flex: none;
+}
+.affordance-off__why {
+  font-size: 0.72rem;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  color: var(--text-2);
+}
+/* On a narrow card the label would push the action row; the reason stays readable by
+ * wrapping the row instead of truncating the explanation. */
+@media (max-width: 560px) {
+  .affordance-off {
+    white-space: normal;
+  }
 }
 /* The "Open project" CTA in the App view popover head. */
 .node-drawer__open {
