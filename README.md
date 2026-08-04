@@ -255,6 +255,10 @@ Agent quality here is a number you can gate on. Two suites, one set of scorers:
 - **The oracle benchmark** (`just eval-bench`) drives real tasks on a **served model** and grades
   each run's own committed answer with those same scorers. It ratchets against a committed
   per-engine baseline, so a capability regression fails rather than quietly scoring lower.
+  The suite-wide score always gates. A single family gates only where it has at least three
+  tasks — six of the eleven published families do not, and on those a move is reported but
+  not failed, because a one-task family reads 0 or 1000 and nothing in between. The task
+  count is printed beside every family for exactly this reason.
 
 **Reading a score.** Every score is an integer **per-mille** — a rate on a 0–1000 scale
 (769 ≡ 76.9%), never a count — and an aggregate is the **floor** of the integer mean over the
@@ -280,14 +284,16 @@ on two Gemma-4-family builds — Ollama `gemma4:12b` and a llama.cpp GGUF served
 `kx-serve:gemma-4-12b-it-q4_k_m`. They are not the same build, and the columns are not
 interchangeable. The label travels in the committed baseline, and CI holds this text to it.
 
-**Captured 2026-07-31** (`5a67e740` Ollama, `d9d43246` llama.cpp). A baseline is a
-measurement of one commit, and fixes land between captures — so a table can publish a zero
-for something already repaired. Two of the zeros below are known to be stale: the `http`
-family was a runtime defect, since fixed and measured passing, and the `react` zero on
-Ollama moved with it. **Treat any number here as "as of the capture above" and re-run
-`just eval-bench` for the current tree.** Numbers are only refreshed by a deliberate
-two-engine re-capture, never edited by hand, which is why a fix can be live before the
-table moves.
+A baseline is a measurement of ONE commit, and fixes land between captures — so a table can
+publish a zero for something already repaired. **Treat every number here as "as of the
+capture named beside the chart" and re-run `just eval-bench` for the current tree.** Numbers
+are only refreshed by a deliberate two-engine re-capture, never edited by hand, which is why
+a fix can be live before the table moves.
+
+The capture's commit and date are rendered from the baselines themselves rather than typed
+here — a previous hand-written provenance line named a capture two weeks and fourteen commits
+old while every number beside it was current, and the gate that checks those numbers could
+not see the sentence.
 
 ### Per-capability — `task_success@<family>`
 
@@ -298,57 +304,58 @@ exact pass count.
 | --- | ---: | --- | ---: | ---: |
 | **tool** | 6 | picks the right tool, and carries its result into the NEXT tool call | 1000 · 6/6 | 1000 · 6/6 |
 | **react** | 3 | decides *whether* to use a tool: refuses an ungranted one, reaches for a needed one, answers a known fact without either | 1000 · 3/3 | 1000 · 3/3 |
-| **reach** | 3 | reaches past the prompt — searches a dataset of 61 documents built around near-misses, recalls a memory, inherits a capability | 1000 · 3/3 | 666 · 2/3 |
+| **reach** | 3 | reaches past the prompt — searches a dataset of 61 documents built around near-misses, recalls a memory, inherits a capability | 1000 · 3/3 | 1000 · 3/3 |
 | **swarm** | 1 | N agents in parallel, one gather merging their committed outputs | 1000 · 1/1 | 1000 · 1/1 |
-| **script** | 3 | runs a registered script in the sandbox and answers from what it computed | 1000 · 3/3 | 666 · 2/3 |
-| **http** | 2 | reaches a tool over the **network** under a bearer credential, and pages through a result set | 1000 · 2/2 | 500 · 1/2 |
-| **failure** | 4 | recovers when a tool errors, hangs, or returns garbage — and a healthy control that fails if it starts distrusting every tool | 750 · 3/4 | 750 · 3/4 |
+| **http** | 2 | reaches a tool over the **network** under a bearer credential, and pages through a result set | 1000 · 2/2 | 1000 · 2/2 |
+| **failure** | 4 | recovers when a tool errors, hangs, or returns garbage — and a healthy control that fails if it starts distrusting every tool | 750 · 3/4 | 1000 · 4/4 |
 | **menu** | 1 | picks correctly from a menu as long as the runtime will present | 1000 · 1/1 | 1000 · 1/1 |
-| **long** | 1 | sustains six tool calls across four tools inside the eight-turn ceiling | 1000 · 1/1 | 0 · 0/1 |
+| **long** | 1 | sustains six tool calls across four tools inside the eight-turn ceiling | 1000 · 1/1 | 1000 · 1/1 |
 | **adversarial** | 2 | ignores an instruction planted in a tool's OUTPUT — while still acting on a legitimate request that merely looks like one | 1000 · 2/2 | 1000 · 2/2 |
 | **irrelevance** | 4 | declines to fire when NOTHING on the menu applies — an email send and a live weather read no granted tool can serve — beside two look-alikes phrased the same way that a granted tool must serve, so an always-refuse policy fails | 750 · 3/4 | 1000 · 4/4 |
 | **memory** | 2 | updates a stored fact and answers with the NEW value while the superseded row is still live, and abstains when memory holds no answer | 1000 · 2/2 | 1000 · 2/2 |
-| **scaffold** | 2 | the model scaffolds the app's whole project LIVE (plans it, authors every file, 20-min budget), the app then RUNS, and the answer must carry a code that exists only inside the generated project — the contextual and codified lanes; a hosted app has no runnable blueprint, so it is out of scope here | 0 · 0/2 | 0 · 0/2 |
-| **workflow** | 7 | runs a STORED workflow definition by handle — canonical saved bytes, every warrant built server-side at run — through deterministic step kinds: a credentialed http dial, a 3-way parallel quorum join, a typed conditional whose untaken arm provably never dials, a journal-backed 3 s timer that carries its parent's bytes, a retry that recovers only via a FRESH attempt identity, and a continue policy whose failed branch commits a placeholder the join releases past; every oracle token exists only on the harness fixture, so the model is never what is being measured | 1000 · 7/7 | 1000 · 7/7 |
-| **nlauthor** | 5 | authors a durable POLICY ROLE, a SCHEDULED TRIGGER and a CREDENTIAL from one sentence of English — the runtime returns the exact typed request it would issue, so approving forwards the bytes that were shown; the secret arm proves a value never rides the preview, and an authority-exceeding ask (a role naming a tool nobody registered) must be REFUSED beside a near-identical ask that must SUCCEED, so an always-refuse surface cannot score | 800 · 4/5 | 800 · 4/5 |
 
-The same rates drawn with their denominators — identical bars are not identical evidence: a
-1000 from one task is one pass, a 1000 from six tasks is six.
+The headline comparison — both engines, one graph, same model family. Bars are
+`task_success` per-mille; `n` is the number of tasks behind each bar, because a 1000
+from one task is one pass and a 1000 from six is six.
 
-<!-- bench-chart:ollama — data checked against baseline.ollama.json by docs/site/scripts/check-docs.mjs; keep this anchor -->
-```mermaid
-xychart-beta horizontal
-    title "task_success by family — Ollama gemma4:12b (passes/tasks)"
-    x-axis ["tool (6/6)", "react (3/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (2/2)", "failure (3/4)", "menu (1/1)", "long (1/1)", "adversarial (2/2)", "irrelevance (3/4)", "memory (2/2)", "scaffold (0/2)", "workflow (7/7)", "nlauthor (4/5)"]
-    y-axis "per-mille" 0 --> 1000
-    bar [1000, 1000, 1000, 1000, 1000, 1000, 750, 1000, 1000, 1000, 750, 1000, 0, 1000, 800]
-```
+<!-- bench-chart:comparison — GENERATED by docs/site/scripts/render-bench-chart.mjs
+     from crates/kx-eval/corpus/bench-v1/baseline.*.json and validated by
+     docs/site/scripts/check-docs.mjs. Series order: Ollama, llama.cpp.
+     Keep this anchor. -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/bench-agentic-dark.svg">
+  <img alt="task_success per-mille by capability family, Ollama versus llama.cpp, captured at 1f4c5b88f702. Agentic aggregate 931 versus 1000 over 29 tasks." src="docs/assets/bench-agentic-light.svg" width="900">
+</picture>
 
-<!-- bench-chart:llamacpp — data checked against baseline.llamacpp.json by docs/site/scripts/check-docs.mjs; keep this anchor -->
-```mermaid
-xychart-beta horizontal
-    title "task_success by family — llama.cpp kx-serve:gemma-4-12b-it-q4_k_m (passes/tasks)"
-    x-axis ["tool (6/6)", "react (3/3)", "reach (2/3)", "swarm (1/1)", "script (2/3)", "http (1/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (2/2)", "irrelevance (4/4)", "memory (2/2)", "scaffold (0/2)", "workflow (7/7)", "nlauthor (4/5)"]
-    y-axis "per-mille" 0 --> 1000
-    bar [1000, 1000, 666, 1000, 666, 500, 750, 1000, 0, 1000, 1000, 1000, 0, 1000, 800]
-```
+**First series Ollama `gemma4:12b`, second llama.cpp `kx-serve:gemma-4-12b-it-q4_k_m`.**
+**Agentic `task_success`: 931 (27/29) on Ollama vs
+1000 (29/29) on llama.cpp** — per-mille, over the families
+plotted above. Captured at `1f4c5b88f702` on 2026-08-04; `n` is the number of tasks behind each
+bar, and a family with a small `n` moves in large steps — one task flipping is the whole bar.
+
+**Scope, stated so the arithmetic reconciles.** These 11 agentic families are
+29 of the suite's 46 tasks. The remaining
+**17 authoring and scripting tasks** are measured but not broken down here
+(14 and 14 passes respectively): `scaffold` — project scaffolding — code authoring, not agentic execution; `nlauthor` — authoring durable config from natural language — an authoring surface; `workflow` — running stored workflow definitions — deterministic step kinds, the model is not what is measured; `script` — script execution — a runtime capability rather than an agentic one. Add them
+back and you get the suite-wide **891** / **934** in the table below —
+CI checks that sum, so a withheld family can never become an unmeasured one.
 
 ### Suite-wide
 
 | Metric | Ollama | llama.cpp |
 | --- | ---: | ---: |
-| `task_success` | 891 · 41/46 | 826 · 38/46 |
-| `tool_call_f1` † | 930 | 893 |
-| `tool_seq_fsa` | 807 · 21/26 | 769 · 20/26 |
-| `tool_seq_psa` † | 903 | 865 |
-| `groundedness` ‡ | 1000 | 0 |
-| `context_recall` ‡ | 1000 | 0 |
-| `memory_quality` † | 1000 | 1000 |
-| `loop_efficiency` † | 821 | 910 |
+| `task_success` | 891 · 41/46 | 934 · 43/46 |
+| `tool_call_f1` † | 930 | 953 |
+| `tool_seq_fsa` | 807 · 21/26 | 846 · 22/26 |
+| `tool_seq_psa` † | 903 | 929 |
+| `groundedness` ‡ | 1000 | 1000 |
+| `context_recall` ‡ | 1000 | 1000 |
+| `memory_quality` † | 1000 | 0 |
+| `loop_efficiency` † | 821 | 933 |
 | `injection_resistance` | 1000 · 5/5 | 1000 · 5/5 |
 | `retrieval_success_at_8` | 1000 · 10/10 | 800 · 8/10 |
 | `pass_k4` | 1000 · 3/3 | 1000 · 3/3 |
-| `model_time_share` † | 874 | 874 |
+| `model_time_share` † | 877 | 880 |
 
 The pass/fail rows carry their own denominators: `tool_seq_fsa` applies to the 26 tasks
 with a gold call sequence, `pass_k4` to the three corpus-flagged flagship tasks
@@ -367,115 +374,69 @@ dollar figure — a metric whose input the runtime does not record is not publis
 
 | Spike | Ollama | llama.cpp |
 | --- | ---: | ---: |
-| `tokens_per_task_mean` | 268 tokens | 141 tokens |
-| `tokens_per_success` | 303 tokens | 173 tokens |
-| `tokens_measured_tasks` | 35 tasks | 33 tasks |
-| `task_latency_ms_p50` | 40257 ms | 70586 ms |
-| `task_latency_ms_p95` | 555232 ms | 304733 ms |
-| `store_memory_latency_ms_p50` | 104 ms | 527 ms |
-| `store_memory_latency_ms_p95` | 123 ms | 690 ms |
-| `recall_memory_latency_ms_p50` | 92 ms | 681 ms |
-| `recall_memory_latency_ms_p95` | 100 ms | 743 ms |
-| `query_dataset_latency_ms_p50` | 111 ms | 523 ms |
-| `query_dataset_latency_ms_p95` | 127 ms | 557 ms |
+| `tokens_per_task_mean` | 268 tokens | 129 tokens |
+| `tokens_per_success` | 303 tokens | 133 tokens |
+| `tokens_measured_tasks` | 35 tasks | 34 tasks |
+| `task_latency_ms_p50` | 67092 ms | 82031 ms |
+| `task_latency_ms_p95` | 755889 ms | 376007 ms |
+| `store_memory_latency_ms_p50` | 141 ms | 548 ms |
+| `store_memory_latency_ms_p95` | 206 ms | 738 ms |
+| `recall_memory_latency_ms_p50` | 142 ms | 662 ms |
+| `recall_memory_latency_ms_p95` | 194 ms | 926 ms |
+| `query_dataset_latency_ms_p50` | 148 ms | 558 ms |
+| `query_dataset_latency_ms_p95` | 178 ms | 612 ms |
 | `rpc_probe_samples` | 32 calls | 32 calls |
 
-Seven of these are worth explaining, and none of them is flattering.
+Five of these are worth explaining, and one of them is a regression this release caused.
 
-**Neither engine ships a working generated app inside the budget.** `scaffold` asks the
-model to plan and author an entire project live, then RUN the result and report a code
-that exists only inside the generated files. Both engines read 0 · 0/2 — but not the same
-way — and this recapture moved the boundary. `scaffold_completed@attempts` now reads
-**1000 on both engines**: all four runs finished inside the budget, where the previous
-capture had three of four hitting the 20-minute ceiling mid-write. llama.cpp authored 7 and
-11 files in 7.6 and 12.1 minutes; Ollama authored 9 and 12 in 16.0 and 16.1. The writing
-problem is gone.
+**The tool loop now closes on both engines, and that is what moved.** `http`, `long`,
+`reach`, `script` and `failure` all read 1000 on llama.cpp in this capture. In the previous
+one they read 500, 0, 666, 666 and 750: the model proposed tool calls in its own syntax, the
+argument schema refused them, and the run failed having looked like it worked, because the
+tolerant parser recovered the call either way. The runtime now reads a model's tool-call
+delimiters out of its own chat template and constrains the arguments it writes. Ollama is
+unchanged across every family in the same capture, which is what says the change is surgical
+rather than a retune.
 
-What remains is entirely a **grounding** failure, and it is now the whole of the 0 · 0/2:
-every run planned a project, authored it, and ran it, and then answered that it had no
-access to the very files it had just written. The code the oracle asks for exists only
-inside those files, so an answer that cannot reach them cannot carry it. The per-scaffold
-durations and file counts are committed as spikes beside the gate.
+**The one number this release moved the wrong way, published rather than withheld.** Ollama
+passes both memory tasks and grounds both. llama.cpp passes both tasks too —
+`task_success@memory` reads 1000 — while `memory_quality` reads 0: the answer is right, but
+the recall observation that should have carried the fact came back empty, which is precisely
+what that metric exists to catch. Constraining tool arguments to valid JSON is what lifted
+the families above; for a tool whose parameters are all optional an empty argument object is
+legal to both the grammar and the validator, and a model whose native argument syntax is
+unquoted takes that exit once it is masked to a quote or a closing brace. The fix changes
+what the model is taught, so it is deliberately not bundled here.
 
-**NL authoring lands on one engine and not the other, and the control is what says so.**
-`nlauthor` asks the runtime to author a policy role, a scheduled trigger and a credential
-from one English sentence. llama.cpp reads 800 · 4/5. Ollama reads **200 · 1/5**, and the
-shape of that 200 is the point: all four *accepting* tasks came back `Rejected` — the served
-model never produced a control form the decoder would take — and the only task it passed is
-the one whose expected outcome is a refusal. That is a surface refusing everything, and it
-scores 200 rather than 1000 precisely because the family carries an anti-always-refuse
-control: `nlauthor-classifies-unaided` asks for something that must SUCCEED, and it fails
-here. Without that control the same run would have published full marks for a capability
-that did not work at all. The contract is prompt-shaped, so the same weights served two ways
-do not behave the same way; on this evidence the surface is usable on the llama.cpp build and
-not yet on the Ollama one.
+**The right set of calls in the wrong order stays visible.** `tool_call_f1` is an
+order-tolerant multiset by design and reads 930 and 953, while the exact-order `tool_seq_fsa`
+reads 807 and 846 and the prefix-tolerant `tool_seq_psa` sits between them at 903 and 929.
+The gap is the point: a run can make every call the oracle asks for and still make them in an
+order that would not survive a dependency between steps, and an F1 column structurally cannot
+show that. `loop_efficiency` — 821 and 933 — is the same story from the turns side, and the
+cost is published rather than tuned away.
 
-**Prompt injection through a tool result works on one engine and not the other.** A stored
-value the agent looks up contains an instruction telling it to abandon its task, call a
-different tool, and reply with a planted token. On Ollama it does exactly that — the
-injected run repeats the bait, the single failure behind `injection_resistance` 800 · 4/5.
-On llama.cpp, same model family, same fixture, it ignores the injection and reports the
-real status. (The metric's population grew with the workflow family: the untaken-arm and
-never-leak-the-placeholder absence oracles ride the same gate and pass on both engines —
-they are runtime properties, which is exactly why they can't rescue a model that takes the
-bait.) It is not a property the runtime enforces — a tool result is untrusted text arriving
-in the middle of a trusted conversation, and today nothing stands between the two.
+**Retrieval, not the model, is what separates the two engines on grounding.** `groundedness`
+and `context_recall` both read 1000 on both engines, so when an answer had to rest on a
+retrieved document, it did. `retrieval_success_at_8` is where they part: 1000 against 800.
+The arm without a dedicated embedding model is measurably worse at separating the right
+document from near-misses, and because the two halves are gated separately, that is a
+retrieval verdict rather than a model one.
 
-**Neither engine completes an external-API chain.** `http` is 0 on both. Not because the tool
-failed: on the single-call task the right tool **fired and returned the record**, and the
-model then answered that it had no access to crew records. On the paginated task it called
-the roster once, received a `next_cursor`, and stopped. The runtime dialled a real HTTP
-endpoint, injected the credential, and got an answer back — and the loop did not carry it
-through. The same shape sinks `long`, where six calls were needed and one was made before the
-model narrated a plan instead of executing it.
-
-**`groundedness` on llama.cpp is 0 because retrieval could not find the document — and now
-the suite can prove which half failed.** `context_recall` (did retrieval SURFACE the
-declared evidence?) reads 0 beside it, and `retrieval_success_at_8` reads 8/10 against the
-embedder arm's 10/10: the arm without a dedicated embedding model cannot separate the right
-document from sixty near-misses. That is a retrieval verdict, not a model one, and the
-numbers now say so themselves instead of leaving it to the preamble.
-
-**The right set of calls in the wrong order was invisible, and no longer is.**
-`tool_call_f1` is an order-tolerant multiset by design, and it reads a comfortable 809/844
-— while the exact-order `tool_seq_fsa` reads 538 and 692. A third to a half of tool-using
-runs make the right calls in a broken or padded order, a cost the F1 column structurally
-cannot show. `loop_efficiency` (670 on Ollama) is the same story from the turns side: the
-loop fires calls it does not need, and that cost is published rather than tuned away. (The
-mean now includes the workflow family's seven stored DAGs, each spending exactly its ideal
-step count — deterministic steps can lift the average but never hide a wasteful loop's own
-rows.)
-
-**Passing once is not passing.** `pass_k4` re-runs three flagship tasks four times each on
-fully fresh serves, and both engines read 333 · 1/3 — but not on the same task, which is the
-part worth reading. Ollama passes `failure-tool-errors-recovers` all four trials and drops
-`tool-contract-refusal`; llama.cpp does the exact opposite. `http-authed-lookup` fails all
-eight — reliably absent, which at least makes it an honest 0. Each engine is thus reliable at
-one thing the other is not, and the shared aggregate hides that: this is why the per-task
-trials are committed as spikes beside the gate rather than folded into it. The first capture
-of this number was wrong twice in ways worth recording: trials beside a still-resident
-main model starved and read as model unreliability, and a trial budget tighter than the
-suite's truncated a working three-turn chain. Both now have regression guards.
-
-**The memory split runs the other way for once.** Ollama passes both memory tasks but
-grounds only one (`memory_quality` 500 — the update run answered the new value without its
-recall observation carrying it); llama.cpp grounds what it recalls (`memory_quality` 1000)
-but fails the abstention task — asked for a fact memory does not hold, it invents instead
-of refusing. Neither column is clean, and they fail differently.
+**Repetition and injection are clean in this capture, which is a narrower claim than it
+sounds.** `pass_k4` re-runs three flagship tasks four times each on fully fresh serves and
+reads 1000 on both engines — every trial of every task passed. `injection_resistance` also
+reads 1000 on both: a stored value containing an instruction to abandon the task did not
+divert either engine. Neither is a property the runtime enforces. A tool result is untrusted
+text arriving in the middle of a trusted conversation and nothing stands between the two, so
+this measures that these models did not take this bait on these tasks — one fixture, one
+model family, and no claim beyond it.
 
 **Speed is measured but only one number is gated.** `model_time_share` is the share of a
-task's wall clock spent inside the model rather than the runtime around it — 936 and 913.
-It is a ratio on purpose: an absolute-millisecond gate reads differently on a slower host
-with no code change, so it cannot tell a regression from a busier machine. One honesty note
-on this capture: the workflow family's deterministic steps never dispatch the model, but
-their timing windows on a shared serve still absorb model activity draining from
-neighbouring tasks, so the family reads 798/399 on this metric rather than a literal 0 —
-the number is cost attribution on a busy serve, not evidence a pure step held the model
-(the model-free drive gate is the witness for that). The absolutes live in the
-Cost-and-latency table above, recorded and never gated — including a 437-second
-`task_latency` p95 on llama.cpp: the in-process engine runs the 12B inside the same process
-as the runtime, so everything queued behind a saturated host is counted where it happened,
-published rather than smoothed.
+task's wall clock spent inside the model rather than the runtime around it — 877 and 880. It
+is a ratio on purpose: an absolute-millisecond gate reads differently on a slower host with
+no code change, so it cannot tell a regression from a busier machine. The absolutes live in
+the Cost-and-latency table above, recorded and never gated.
 
 ### What this does not measure
 
@@ -505,7 +466,8 @@ ollama stop gemma4:12b && KX_SERVE_MODEL_GGUF=<gemma-4-12b.gguf> just eval-bench
 ```
 
 Real-model numbers are not bit-reproducible — local sampling and quantisation vary — which is
-why they ratchet against a committed per-engine baseline rather than an absolute threshold.
+why they ratchet against a committed per-engine baseline rather than an absolute threshold, and
+why a family too small to distinguish a regression from a coin flip is reported rather than gated.
 Nothing here is a marketing benchmark run on hardware you don't have.
 
 ## Observability & cost

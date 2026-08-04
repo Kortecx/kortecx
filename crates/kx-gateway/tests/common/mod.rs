@@ -225,3 +225,61 @@ pub fn pure_warrant() -> WarrantSpec {
         ..Default::default()
     }
 }
+
+// ---------------------------------------------------------------------------------
+// Engine resolution for live-serve oracles
+// ---------------------------------------------------------------------------------
+
+/// True iff the operator opted into the Ollama engine.
+///
+/// ⚠ Note what UNSET means. `KX_SERVE_OLLAMA` defaults to `auto`, which turns Ollama ON
+/// when no GGUF is configured — the OPPOSITE of CI, which pins it `off`. So this asks for
+/// an explicit opt-in and nothing else.
+#[must_use]
+pub fn ollama_opted_in() -> bool {
+    std::env::var("KX_SERVE_OLLAMA").is_ok_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "on" | "true" | "yes"
+        )
+    })
+}
+
+/// Resolve the engine a live-serve oracle should drive, given the caller's own GGUF
+/// resolver, and FAIL CLOSED when neither engine is available.
+///
+/// **Why this exists.** Twelve live oracles resolved a GGUF PATH and returned early when
+/// they could not find one. Under the Ollama arm that path never exists, so those tests
+/// printed a skip line and reported PASS — a whole engine's worth of coverage that read
+/// green while executing nothing. `PASSED` and `EXECUTED` are different columns, and a
+/// skip is indistinguishable from a pass to every reader and every gate.
+///
+/// **Ollama is checked FIRST, deliberately.** A GGUF stand-in registers as the serve
+/// PRIMARY, which would silently mask an operator's explicit `KX_SERVE_OLLAMA=on` and
+/// measure llama.cpp while labelling the run `ollama`.
+///
+/// The caller passes its own `gguf` resolver because the stand-in policy differs by file:
+/// some accept the small public model CI fetches, others deliberately refuse one because a
+/// weak stand-in cannot exercise what they measure.
+///
+/// # Panics
+/// When neither engine is configured. That is the point — see above.
+#[must_use]
+pub fn resolve_engine(gguf: impl FnOnce() -> Option<PathBuf>) -> &'static str {
+    if ollama_opted_in() {
+        return "ollama";
+    }
+    match gguf() {
+        Some(p) => {
+            std::env::set_var("KX_SERVE_MODEL_GGUF", &p);
+            "llama.cpp"
+        }
+        None => panic!(
+            "PRECONDITION: no serve engine. This is a LIVE oracle, so it FAILS rather than \
+             skipping — a skip reads exactly like a pass and hides a whole engine's \
+             coverage.\n\
+             Set KX_SERVE_OLLAMA=on (with KX_SERVE_OLLAMA_MODELS), or provide a GGUF via \
+             KX_SERVE_MODEL_GGUF / `just fetch-agent-model`."
+        ),
+    }
+}

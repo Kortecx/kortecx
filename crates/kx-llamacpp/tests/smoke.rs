@@ -1271,3 +1271,186 @@ fn smoke_grammar_from_kx_grammar() {
         "kx-grammar envelope GBNF must build a lazy sampler"
     );
 }
+
+// ===================================================================================
+// Lazy-grammar ENGAGEMENT — the probe that stands between a typo and a process abort.
+//
+// llama.cpp arms a lazy grammar when a trigger pattern matches, then REPLAYS the
+// already-sampled tokens covered by the pattern's first capture group into the grammar
+// (`llama-grammar.cpp`, `llama_grammar_accept_impl`). `llama_grammar_accept_token` ends in
+// `throw std::runtime_error("Unexpected empty grammar stack…")` when the grammar cannot
+// accept them, and there is no `catch` between there and the C boundary — so a trigger
+// whose capture group is not a valid grammar prefix does not degrade, it takes the process
+// down mid-decode.
+//
+// These tests exercise the REAL regex engine and the REAL replay path at CI speed, with no
+// context, no logits and no decode: `Sampler::accept` reaches `llama_grammar_accept_impl`
+// directly. They render through `kx-grammar` and arm through
+// `kx_grammar::tool_call_trigger_patterns`, so there are no hand-copied literals that can
+// drift from what production builds.
+// ===================================================================================
+
+/// Build a lazy sampler over the dialect-aware grammar for a fixed two-tool grant set.
+fn dialect_sampler<'a>(
+    backend: &'a LlamaBackend,
+    vocab: &kx_llamacpp::vocab::Vocab<'_, '_>,
+) -> Sampler<'a> {
+    let spec = kx_grammar::ToolEnvelopeSpec::new(vec![
+        kx_grammar::ToolSpec::new("calc/add", "1"),
+        kx_grammar::ToolSpec::new("kv/get", "1"),
+    ]);
+    let gbnf = spec.to_gbnf_for(kx_toolcall::KNOWN_DIALECTS);
+    let triggers = kx_grammar::tool_call_trigger_patterns(kx_toolcall::KNOWN_DIALECTS);
+    let refs: Vec<&str> = triggers.iter().map(String::as_str).collect();
+    Sampler::chain(backend)
+        .add_grammar_lazy(vocab, &gbnf, "root", &refs)
+        .and_then(kx_llamacpp::SamplerChainBuilder::add_greedy)
+        .and_then(kx_llamacpp::SamplerChainBuilder::build)
+        .expect("the dialect grammar must parse and build a lazy sampler")
+}
+
+/// P6: the dialect-aware GBNF must PARSE. A grammar llama.cpp refuses fails the whole
+/// dispatch rather than degrading it, so this is checked before anything else.
+///
+/// The strict build is checked BEFORE the lazy one on purpose: `add_grammar_lazy` returns
+/// the same `SamplerInitFailed` for a malformed GBNF and for a trigger regex `std::regex`
+/// will not compile, and those send a reader to completely different code.
+#[test]
+fn dialect_grammar_parses_in_llamacpp() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let params = ModelParams::new().with_n_gpu_layers(0);
+    let model = Model::load_with_params(&backend, MODEL_PATH, &params).expect("load stories260K");
+    let vocab = model.vocab();
+
+    let spec = kx_grammar::ToolEnvelopeSpec::new(vec![
+        kx_grammar::ToolSpec::new("calc/add", "1"),
+        kx_grammar::ToolSpec::new("kv/get", "1"),
+    ]);
+    let gbnf = spec.to_gbnf_for(kx_toolcall::KNOWN_DIALECTS);
+
+    let strict = Sampler::chain(&backend)
+        .add_grammar(&vocab, &gbnf, "root")
+        .and_then(kx_llamacpp::SamplerChainBuilder::add_greedy)
+        .and_then(kx_llamacpp::SamplerChainBuilder::build);
+    assert!(
+        strict.is_ok(),
+        "the dialect GBNF itself does not PARSE ({:?}). This is a renderer bug, not a \
+         trigger bug.\n--- grammar ---\n{gbnf}",
+        strict.err(),
+    );
+
+    // Each trigger armed ALONE, so a refusal names the dialect whose pattern is at fault.
+    for d in kx_toolcall::KNOWN_DIALECTS {
+        let pattern = d.trigger_pattern();
+        let one = Sampler::chain(&backend)
+            .add_grammar_lazy(&vocab, &gbnf, "root", &[pattern.as_str()])
+            .and_then(kx_llamacpp::SamplerChainBuilder::add_greedy)
+            .and_then(kx_llamacpp::SamplerChainBuilder::build);
+        assert!(
+            one.is_ok(),
+            "[{}] trigger {pattern:?} was REFUSED by llama.cpp ({:?}) while the grammar \
+             itself parses — the pattern is not a regex std::regex accepts.",
+            d.id,
+            one.err(),
+        );
+    }
+
+    let _ = dialect_sampler(&backend, &vocab);
+}
+
+/// P1 — THE load-bearing probe. Every dialect's opener must ENGAGE the grammar, and the
+/// replay of that opener must be a prefix the grammar accepts.
+///
+/// A failure here is one of two things and both matter: the trigger did not match (the
+/// shipped defect, reproduced), or the grammar could not accept the replayed capture group
+/// (the abort, caught in a unit test instead of in production).
+#[test]
+fn lazy_grammar_engages_on_every_dialect_opener() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let params = ModelParams::new().with_n_gpu_layers(0);
+    let model = Model::load_with_params(&backend, MODEL_PATH, &params).expect("load stories260K");
+    let vocab = model.vocab();
+
+    for d in kx_toolcall::KNOWN_DIALECTS {
+        // What the model would actually type to open a call in this dialect.
+        let opener = match d.shape {
+            kx_toolcall::DialectShape::CanonicalEnvelope => "{\"tool_call\"".to_string(),
+            kx_toolcall::DialectShape::NameThenArgs => {
+                format!("{}{}", d.open, d.call_marker.as_deref().unwrap_or(""))
+            }
+            kx_toolcall::DialectShape::NamedObject => format!("{}{{", d.open),
+        };
+
+        let mut sampler = dialect_sampler(&backend, &vocab);
+        kx_llamacpp::reset_grammar_engagement();
+
+        // `parse_special: true` so a control token spelled `<|tool_call>` is fed the way a
+        // real model would emit it — as one token whose piece is that text.
+        let tokens = vocab
+            .tokenize(&opener, false, true)
+            .unwrap_or_else(|e| panic!("[{}] tokenize {opener:?}: {e:?}", d.id));
+        assert!(
+            !tokens.is_empty(),
+            "[{}] {opener:?} tokenized to nothing",
+            d.id
+        );
+        for t in tokens {
+            sampler.accept(t);
+        }
+
+        let e = kx_llamacpp::grammar_engagement();
+        assert!(
+            e.engaged >= 1,
+            "[{}] the sampler did NOT engage on its own opener {opener:?} \
+             (engaged={} awaiting={}).\n\
+             engaged=0 with awaiting>0 is the shipped defect reproduced: the trigger set \
+             and the model's dialect disagree.\n\
+             engaged=0 with awaiting=0 means the log callback never fired — the COUNTER is \
+             broken, not the grammar.",
+            d.id,
+            e.engaged,
+            e.awaiting,
+        );
+    }
+}
+
+/// P5: honest prose must NOT engage. An over-eager trigger is worse than one that never
+/// fires — it masks an answer as a tool call — so the adversarial cases are included:
+/// prose that quotes the markers verbatim.
+#[test]
+fn prose_does_not_engage_the_lazy_grammar() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let params = ModelParams::new().with_n_gpu_layers(0);
+    let model = Model::load_with_params(&backend, MODEL_PATH, &params).expect("load stories260K");
+    let vocab = model.vocab();
+
+    let prose = [
+        "The answer is 42.",
+        "I will not call a tool for this one.",
+        // Adversarial: the words, without the delimiters.
+        "A tool_call is how a model asks the runtime to run something.",
+        "Use the tool call envelope when you need arguments checked.",
+        "Compare 3 < 5 and 7 > 2 before deciding.",
+    ];
+
+    for text in prose {
+        let mut sampler = dialect_sampler(&backend, &vocab);
+        kx_llamacpp::reset_grammar_engagement();
+        let tokens = vocab.tokenize(text, false, true).expect("tokenize prose");
+        for t in tokens {
+            sampler.accept(t);
+        }
+        let e = kx_llamacpp::grammar_engagement();
+        assert_eq!(
+            e.engaged, 0,
+            "prose was MASKED as a tool call: {text:?} engaged the grammar \
+             (engaged={} awaiting={}). An over-eager trigger is a failure, not a partial win.",
+            e.engaged, e.awaiting,
+        );
+        assert!(
+            e.awaiting > 0,
+            "prose {text:?} produced NO awaiting-trigger lines at all — the engagement \
+             counter is not observing this sampler, so its zero above proves nothing.",
+        );
+    }
+}

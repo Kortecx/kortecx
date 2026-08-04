@@ -34,6 +34,34 @@
 use std::env;
 use std::path::PathBuf;
 
+/// `kx-llamacpp`'s grammar-engagement counter is driven by matching two of llama.cpp's
+/// own `LLAMA_LOG_DEBUG` strings. That is the only signal that distinguishes "the lazy
+/// grammar never engaged" from "the grammar engaged fine" — but it pins us to upstream's
+/// WORDING, and a submodule bump that reworded either line would make the counter read
+/// zero forever without a single test going red. Fail the build instead.
+///
+/// Deliberately a hard failure rather than a warning: a silently-zeroed instrument is
+/// exactly the failure mode this counter exists to rule out.
+fn assert_grammar_log_lines_still_exist(llama_cpp_dir: &std::path::Path) {
+    const WATCHED: [&str; 2] = ["Grammar triggered on", "Grammar still awaiting trigger"];
+    let path = llama_cpp_dir.join("src/llama-grammar.cpp");
+    let Ok(src) = std::fs::read_to_string(&path) else {
+        // An unpopulated submodule is already fatal further down; do not double-report.
+        return;
+    };
+    for needle in WATCHED {
+        assert!(
+            src.contains(needle),
+            "kx-llamacpp-sys: the pinned llama.cpp no longer logs {needle:?} in {}. \
+             kx-llamacpp's grammar-engagement counter matches that exact wording, so it \
+             would now read zero for every decode while the sampler works fine — a broken \
+             instrument that no test can see. Re-read the upstream diff, update \
+             kx-llamacpp/src/log.rs's prefixes to match, and re-run the engagement probe.",
+            path.display(),
+        );
+    }
+}
+
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let llama_cpp_dir = manifest_dir.join("llama.cpp");
@@ -46,6 +74,9 @@ fn main() {
     println!("cargo:rerun-if-changed=llama.cpp/CMakeLists.txt");
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=llama.cpp/src/llama-grammar.cpp");
+
+    assert_grammar_log_lines_still_exist(&llama_cpp_dir);
 
     // ------------------------------------------------------------------
     // Pin echo — surface the llama.cpp submodule SHA at build time so CI

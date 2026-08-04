@@ -40,6 +40,9 @@ import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+// The ONE declaration of which families are agentic capability and which are not, shared
+// with the generator so the chart and its checker cannot disagree about the headline set.
+import { NOT_AGENTIC_CAPABILITY, passesFrom } from "./render-bench-chart.mjs";
 
 // Not `import.meta.dirname` — that needs Node 20.11, and this package declares
 // `engines.node >= 18`.
@@ -231,10 +234,22 @@ const problems = [];
     const sums = loaded.map(() => 0);
     const claimed = new Set(rows.map((r) => r[1]));
     for (const family of taskCounts.keys()) {
-      if (!claimed.has(family)) {
+      const withheld = NOT_AGENTIC_CAPABILITY.has(family);
+      if (!withheld && !claimed.has(family)) {
         problems.push(
-          `${source}: the benchmark table has no row for the '${family}' family, which the ` +
-            `corpus contains — an unpublished family is a measured capability the reader never sees`,
+          `${source}: the benchmark table has no row for the agentic '${family}' family, which ` +
+            `the corpus contains — an unpublished agentic family is a measured capability the ` +
+            `reader never sees`,
+        );
+      }
+      // The withheld families are authoring/scripting surfaces whose per-family results
+      // are captured but not broken out per family here. Publishing one would contradict the
+      // scope line and silently change what the headline claims to cover.
+      if (withheld && claimed.has(family)) {
+        problems.push(
+          `${source}: the benchmark table publishes '${family}', which is declared withheld ` +
+            `in render-bench-chart.mjs. Either drop the row or remove it from ` +
+            `NOT_AGENTIC_CAPABILITY — the table and the declaration must agree`,
         );
       }
     }
@@ -380,12 +395,25 @@ const problems = [];
   {
     const suiteSuccessRow = suiteRows.find((r) => r[1] === "task_success");
     if (suiteSuccessRow) {
-      loaded.forEach((_, i) => {
+      // The published table covers the AGENTIC families only, so the reconciliation is
+      // shown + withheld == suite-wide. This is what stops a withheld family from
+      // quietly becoming an unmeasured one: if the internal families ever stopped being
+      // scored, their contribution would drop and this sum would fail.
+      loaded.forEach(([engine, gate], i) => {
         const parsed = CELL.exec(suiteSuccessRow[3 + i].trim());
-        if (parsed && readmeTable.sums[i] !== Number(parsed[2])) {
+        if (!parsed) return;
+        let withheldPasses = 0;
+        for (const family of NOT_AGENTIC_CAPABILITY.keys()) {
+          const n = taskCounts.get(family);
+          if (n === undefined) continue;
+          withheldPasses += passesFrom(gate.get(`task_success@${family}`) ?? 0, n);
+        }
+        const total = readmeTable.sums[i] + withheldPasses;
+        if (total !== Number(parsed[2])) {
           problems.push(
-            `README.md: the family pass-counts sum to ${readmeTable.sums[i]} on ` +
-              `${loaded[i][0]}, but suite-wide task_success claims ${parsed[2]}/${suiteTotal}`,
+            `README.md: the published family pass-counts sum to ${readmeTable.sums[i]} on ` +
+              `${engine}, plus ${withheldPasses} withheld = ${total}, but suite-wide ` +
+              `task_success claims ${parsed[2]}/${suiteTotal}`,
           );
         }
       });
@@ -451,78 +479,142 @@ const problems = [];
     }
   }
 
-  // (6) THE README's DENOMINATOR CHARTS. A bar chart of family rates hides that a
-  //     1000 from one task is one pass while a 1000 from six is six — so each chart
-  //     encodes the per-engine fraction IN its x-axis labels, and this check holds the
-  //     labels and the bars to the same baselines and corpus counts as the tables.
-  //     The `<!-- bench-chart:<key> -->` anchor comment is the contract: deleting it
-  //     (or the chart) fails here, by design.
+  // (6) THE README's TWO-ENGINE COMPARISON CHART — now a GENERATED, COMMITTED SVG.
+  //
+  //     Mermaid OVERLAYS multiple series and emits no legend, so a shorter bar can hide
+  //     entirely behind a taller one and a true 0 is indistinguishable from a family that
+  //     was never scored. The grouped chart is therefore rendered to SVG and committed;
+  //     GitHub shows committed SVG in markdown but not styled HTML.
+  //
+  //     A generated image that nothing validates is a SCREENSHOT, and screenshots go stale
+  //     without anything failing — the exact class that let the capture-provenance line rot
+  //     for two weeks. So each row carries `data-family/-n/-a/-b`, and those attributes are
+  //     held to the committed baselines here.
   {
-    const chartKeys = [
-      ["Ollama", "ollama"],
-      ["llama.cpp", "llamacpp"],
-    ];
-    chartKeys.forEach(([engine, key], engineIdx) => {
-      const anchored = new RegExp(
-        String.raw`<!--\s*bench-chart:${key}\b[^>]*-->\s*` + "```mermaid\\n([\\s\\S]*?)```",
-      ).exec(readme);
-      if (!anchored) {
-        problems.push(
-          `README.md: no <!-- bench-chart:${key} --> anchored mermaid chart — the denominator ` +
-            `chart is part of the published record; keep the anchor comment with the fence`,
+    const pic = /<!--\s*bench-chart:comparison\b[\s\S]*?-->\s*<picture>([\s\S]*?)<\/picture>/.exec(readme);
+    if (!pic) {
+      problems.push(
+        "README.md: no <!-- bench-chart:comparison --> anchored <picture> — regenerate with " +
+          "`node docs/site/scripts/render-bench-chart.mjs --write`",
+      );
+    } else {
+      for (const theme of ["light", "dark"]) {
+        const rel = `docs/assets/bench-agentic-${theme}.svg`;
+        if (!pic[1].includes(rel)) {
+          problems.push(`README.md: the comparison <picture> does not reference ${rel}`);
+          continue;
+        }
+        const path = join(REPO, rel);
+        if (!existsSync(path)) {
+          problems.push(`${rel}: missing — the README's chart points at it`);
+          continue;
+        }
+        const svg = await readFile(path, "utf8");
+        const rows = [
+          ...svg.matchAll(
+            /data-family="([a-z]+)"\s+data-n="(\d+)"\s+data-a="(\d+)"\s+data-b="(\d+)"/g,
+          ),
+        ];
+        if (rows.length === 0) {
+          problems.push(
+            `${rel}: carries no data-family rows — the chart cannot be checked against the ` +
+              `baselines, so it is a screenshot`,
+          );
+          continue;
+        }
+        for (const [, family, n, a, b] of rows) {
+          const expected = taskCounts.get(family);
+          if (expected === undefined) {
+            problems.push(`${rel}: plots a '${family}' family the corpus does not have`);
+            continue;
+          }
+          if (Number(n) !== expected) {
+            problems.push(`${rel}: '${family}' claims n=${n}, the corpus has ${expected}`);
+          }
+          if (NOT_AGENTIC_CAPABILITY.has(family)) {
+            problems.push(
+              `${rel}: plots '${family}', which is declared NON-agentic in ` +
+                `render-bench-chart.mjs and must not appear in the headline`,
+            );
+          }
+          [
+            ["Ollama", 0, "ollama", a],
+            ["llama.cpp", 1, "llamacpp", b],
+          ].forEach(([engine, idx, fileKey, plotted]) => {
+            const actual = loaded[idx]?.[1]?.get(`task_success@${family}`);
+            if (actual !== undefined && Number(plotted) !== actual) {
+              problems.push(
+                `${rel}: ${engine} value for '${family}' reads ${plotted}, ` +
+                  `baseline.${fileKey}.json says ${actual}`,
+              );
+            }
+          });
+        }
+        // Every agentic family must be PLOTTED, not merely consistent when present.
+        const plotted = new Set(rows.map((r) => r[1]));
+        for (const family of taskCounts.keys()) {
+          if (NOT_AGENTIC_CAPABILITY.has(family)) continue;
+          if (!plotted.has(family)) {
+            problems.push(`${rel}: the agentic '${family}' family is missing from the chart`);
+          }
+        }
+      }
+
+      // WITHHELD ≠ HIDDEN — the disclosed aggregate, checked against the baselines.
+      let wTasks = 0;
+      const wPasses = loaded.map(() => 0);
+      for (const family of NOT_AGENTIC_CAPABILITY.keys()) {
+        const n = taskCounts.get(family);
+        if (n === undefined) continue;
+        wTasks += n;
+        loaded.forEach(([, gate], i) => {
+          wPasses[i] += passesFrom(gate.get(`task_success@${family}`) ?? 0, n);
+        });
+      }
+      if (wTasks > 0) {
+        if (!new RegExp(String.raw`\*\*${wTasks} authoring and scripting tasks\*\*`).test(readme)) {
+          problems.push(
+            `README.md: the benchmark scope line must state that **${wTasks} authoring and ` +
+              `scripting tasks** are withheld — a filtered table beside an unfiltered ` +
+              `suite-wide figure does not add up, and the reader cannot tell why`,
+          );
+        }
+        const disclosed = new RegExp(
+          String.raw`\(${wPasses[0]} and\s+${wPasses[1]} passes respectively\)`,
         );
-        return;
+        if (!disclosed.test(readme.replace(/\s+/g, " "))) {
+          problems.push(
+            `README.md: the withheld families contributed ${wPasses[0]} and ${wPasses[1]} ` +
+              `passes per the committed baselines; the scope line must say so. Regenerate ` +
+              `with \`node docs/site/scripts/render-bench-chart.mjs --write\``,
+          );
+        }
       }
-      const body = anchored[1];
-      const axis = /^\s*x-axis\s*\[([^\]]*)\]/m.exec(body);
-      const bars = /^\s*bar\s*\[([^\]]*)\]/m.exec(body);
-      if (!axis || !bars) {
-        problems.push(`README.md: bench-chart:${key} has no x-axis or bar line`);
-        return;
-      }
-      const labels = [...axis[1].matchAll(/"([a-z]+)\s*\((\d+)\/(\d+)\)"/g)];
-      const values = bars[1].split(",").map((v) => Number(v.trim()));
-      if (labels.length !== taskCounts.size || values.length !== taskCounts.size) {
-        problems.push(
-          `README.md: bench-chart:${key} plots ${labels.length} label(s) / ${values.length} ` +
-            `bar(s); the corpus has ${taskCounts.size} families`,
-        );
-        return;
-      }
-      const gate = loaded[engineIdx]?.[1];
-      labels.forEach(([, family, num, den], i) => {
-        if (readmeTable.order[i] !== undefined && family !== readmeTable.order[i]) {
-          problems.push(
-            `README.md: bench-chart:${key} order diverges from the family table at position ` +
-              `${i} ('${family}' vs '${readmeTable.order[i]}')`,
-          );
-        }
-        const expectedCount = taskCounts.get(family);
-        if (expectedCount === undefined) {
-          problems.push(`README.md: bench-chart:${key} plots a '${family}' family the corpus does not have`);
-          return;
-        }
-        if (Number(den) !== expectedCount) {
-          problems.push(
-            `README.md: bench-chart:${key} label '${family} (${num}/${den})' — the corpus has ` +
-              `${expectedCount} task(s)`,
-          );
-        }
-        const actual = gate?.get(`task_success@${family}`);
-        if (actual !== undefined && values[i] !== actual) {
-          problems.push(
-            `README.md: bench-chart:${key} bar for '${family}' reads ${values[i]}, ` +
-              `baseline.${engine} says ${actual}`,
-          );
-        }
-        if (Math.floor((1000 * Number(num)) / Number(den)) !== values[i]) {
-          problems.push(
-            `README.md: bench-chart:${key} label '${family} (${num}/${den})' folds to ` +
-              `${Math.floor((1000 * Number(num)) / Number(den))} — the bar reads ${values[i]}`,
-          );
-        }
-      });
-    });
+    }
+  }
+
+  // (6b) THE CAPTURE PROVENANCE. The commit and date a published number was measured at.
+  //      This check exists because its absence had a consequence: the README named a
+  //      capture from `5a67e740` / 2026-07-31 long after the committed baselines moved to
+  //      `0f16840f` / 2026-08-03, and every NUMBER on the page validated while the
+  //      sentence describing them was two weeks stale. A gate that checks the figures and
+  //      not the claim about the figures is not checking provenance at all.
+  {
+    const sha = (loaded[0]?.[2]?.git_sha ?? "").slice(0, 12);
+    if (sha && !readme.includes(sha)) {
+      problems.push(
+        `README.md: the benchmark section does not name the capture commit '${sha}' that ` +
+          `baseline.ollama.json records. Regenerate with ` +
+          `\`node docs/site/scripts/render-bench-chart.mjs --write\`.`,
+      );
+    }
+    const stale = readme.match(/\*\*Captured \d{4}-\d{2}-\d{2}\*\*\s*\(`([0-9a-f]{6,})`/);
+    if (stale && sha && !stale[1].startsWith(sha.slice(0, 6))) {
+      problems.push(
+        `README.md: a hand-written "Captured …" line names '${stale[1]}' but the committed ` +
+          `baseline was captured at '${sha}'`,
+      );
+    }
   }
 
   // (7) THE PERFORMANCE TABLE — the published absolutes (tokens, latency), held to the
@@ -584,6 +676,126 @@ const problems = [];
           );
         }
       });
+    }
+  }
+
+  // (8) THE NARRATIVE — every metric-shaped number in the prose BELOW the tables must be
+  //     traceable to a committed baseline. The tables and the charts have been checked
+  //     since they were introduced; the paragraphs explaining them never were, and that is
+  //     not a smaller hole than the one check (6) closes — it is the same hole one layer
+  //     out. A reader does not compare a sentence to a table sixty lines up; they believe
+  //     the sentence. A capture that moves every number leaves the prose describing the
+  //     PREVIOUS capture, and nothing here noticed until a whole section was asserting the
+  //     opposite of the table above it.
+  //
+  //     The rule is deliberately mechanical: any 3-or-4 digit integer in the narrative
+  //     must appear as a gate per-mille or as a committed spike (raw, or rounded to the
+  //     second/minute the prose is entitled to use). Anything genuinely not a measurement
+  //     — a year, a byte ceiling, a model size — goes in NON_METRIC with a reason, so the
+  //     exemption is a decision on the record rather than a gap in a regex.
+  {
+    const readme3 = await readFile(join(REPO, "README.md"), "utf8");
+    // Anchored on the phrase, not the count — the count is part of the prose and changes
+    // with the capture, and a marker that moves with the content is not a marker.
+    const START = "are worth explaining";
+    const END = "### What this does not measure";
+    const from = readme3.indexOf(START);
+    const to = readme3.indexOf(END);
+    if (from < 0 || to < 0 || to < from) {
+      problems.push(
+        `README.md: cannot locate the benchmark narrative (looked for '${START}' … '${END}'). ` +
+          `This gate reads that region; if the section was renamed, move the markers with it ` +
+          `rather than leaving the prose unchecked.`,
+      );
+    } else {
+      const prose = readme3.slice(from, to);
+
+      // Every number a baseline entitles the prose to print.
+      const allowed = new Set();
+      for (const [, gates, , spikes] of loaded) {
+        for (const pm of gates.values()) allowed.add(String(pm));
+        for (const s of spikes.values()) {
+          const v = Number(s.value);
+          allowed.add(String(Math.round(v)));
+          if (/ms/i.test(s.unit ?? "")) {
+            allowed.add(String(Math.round(v / 1000))); // seconds
+            allowed.add(String(Math.round(v / 60000))); // minutes
+            allowed.add((v / 1000).toFixed(1));
+            allowed.add((v / 60000).toFixed(1));
+          }
+        }
+      }
+
+      // Numbers in this region that are not measurements. Each needs a reason.
+      const NON_METRIC = new Map([
+        ["2026", "a calendar year"],
+        ["1000", "the per-mille ceiling itself, used as a word"],
+      ]);
+
+      const seen = new Map();
+      for (const m of prose.matchAll(/(?<![\w.\-/])(\d{3,4})(?:\.\d)?(?![\w%])/g)) {
+        const n = m[1];
+        if (allowed.has(n) || NON_METRIC.has(n)) continue;
+        // Report each distinct orphan once, with the sentence it sits in.
+        if (seen.has(n)) continue;
+        const at = m.index ?? 0;
+        const line = prose.slice(prose.lastIndexOf("\n", at) + 1, prose.indexOf("\n", at));
+        seen.set(n, line.trim());
+      }
+      for (const [n, line] of seen) {
+        problems.push(
+          `README.md: the benchmark narrative prints '${n}', which is not a gate value or a ` +
+            `committed spike in either baseline — so it is either stale from an earlier ` +
+            `capture or fabricated. Sentence: "${line.slice(0, 120)}${line.length > 120 ? "…" : ""}"`,
+        );
+      }
+
+      // The set check above only asks whether a number exists SOMEWHERE. That is not
+      // enough: a value carried over from a previous capture is very often still a real
+      // number for some other gate, so it passes membership while saying something false.
+      // Attribution is the check that catches it — when a sentence names a metric and
+      // prints a figure, the figure has to be THAT metric's.
+      const byGate = new Map();
+      for (const [, gates] of loaded) {
+        for (const [id, pm] of gates) {
+          const base = id.split("@")[0];
+          if (!byGate.has(base)) byGate.set(base, new Set());
+          byGate.get(base).add(String(pm));
+        }
+      }
+      for (const [, , , spikes] of loaded) {
+        for (const [id, s] of spikes) {
+          const base = id.split("@")[0];
+          if (!byGate.has(base)) byGate.set(base, new Set());
+          const v = Number(s.value);
+          const set = byGate.get(base);
+          set.add(String(Math.round(v)));
+          if (/ms/i.test(s.unit ?? "")) {
+            set.add(String(Math.round(v / 1000)));
+            set.add(String(Math.round(v / 60000)));
+            set.add((v / 1000).toFixed(1));
+            set.add((v / 60000).toFixed(1));
+          }
+        }
+      }
+      for (const sentence of prose.split(/(?<=[.!?])\s+/)) {
+        const named = [...sentence.matchAll(/`([a-z][a-z_0-9]*)`/g)]
+          .map((m) => m[1])
+          .filter((g) => byGate.has(g));
+        if (named.length !== 1) continue; // ambiguous or metric-free — the set check covers it
+        const gate = named[0];
+        const values = byGate.get(gate);
+        for (const m of sentence.matchAll(/(?<![\w.\-/])(\d{3,4})(?:\.\d)?(?![\w%])/g)) {
+          const n = m[1];
+          if (values.has(n) || NON_METRIC.has(n)) continue;
+          problems.push(
+            `README.md: the narrative attributes '${n}' to \`${gate}\`, but no engine or ` +
+              `family records that value for it (committed: ` +
+              `${[...values].slice(0, 6).join(", ")}${values.size > 6 ? ", …" : ""}). ` +
+              `Sentence: "${sentence.replace(/\s+/g, " ").slice(0, 120)}…"`,
+          );
+        }
+      }
     }
   }
 }

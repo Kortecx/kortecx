@@ -46,6 +46,12 @@ sha2 = { workspace = true }
 tempfile           = { workspace = true }
 tracing-subscriber = { workspace = true }
 proptest           = { workspace = true }
+# The engagement probe renders through the REAL grammar renderer and arms the REAL
+# trigger set rather than hand-copied literals, so it cannot drift from what production
+# builds. kx-grammar has no llama.cpp dependency, so this direction is the only place the
+# two halves of the lazy-grammar contract can be proven against each other.
+kx-grammar         = { workspace = true }
+kx-toolcall        = { workspace = true }
 
 [lints]
 workspace = true

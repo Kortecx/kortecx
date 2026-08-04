@@ -66,8 +66,9 @@ pub use crate::corpus::{
 };
 pub use crate::error::EvalError;
 pub use crate::report::{
-    aggregate, compare_to_baseline, Baseline, BaselineComparison, BaselineEnv, EvalReport,
-    GateValue, Regression, SpikeMetric, TaskScore, FAMILY_GATE_SEP, GATE_UNIT, SCHEMA_VERSION,
+    aggregate, compare_to_baseline, gate_denominators, Baseline, BaselineComparison, BaselineEnv,
+    EvalReport, GateValue, Regression, SpikeMetric, TaskScore, FAMILY_GATE_SEP, GATE_UNIT,
+    MIN_GATED_N, SCHEMA_VERSION,
 };
 pub use crate::run_quality::{analyze_run, RunQuality};
 pub use crate::runner::{score_corpus, score_golden_v1, score_golden_v1_family};

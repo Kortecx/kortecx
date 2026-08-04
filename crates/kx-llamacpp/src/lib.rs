@@ -180,6 +180,7 @@ pub mod chat;
 pub mod context;
 pub mod error;
 pub mod generator;
+pub mod log;
 pub mod model;
 pub mod mtmd;
 pub mod sampler;
@@ -196,6 +197,9 @@ pub use chat::ChatMessage;
 pub use context::{Context, ContextParams, FlashAttn, KvCacheType, PerfData, PoolingType};
 pub use error::LlamaError;
 pub use generator::Generator;
+pub use log::{
+    grammar_engagement, note_grammar_armed, reset_grammar_engagement, GrammarEngagement,
+};
 pub use model::{Model, ModelParams};
 pub use mtmd::{Bitmap, InputChunks, ModelWithProjector, Mtmd};
 pub use sampler::{Sampler, SamplerChainBuilder};

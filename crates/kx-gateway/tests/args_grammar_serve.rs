@@ -92,10 +92,40 @@ async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
 /// Pull the `args` object out of a turn's RAW emitted text.
 ///
 /// The text is whatever the model produced, which on the llama.cpp leg may carry
-/// prose around the envelope (the GBNF is lazy — it triggers on the `{"tool_call"`
-/// opener). So: find the key, walk back to the enclosing `{`, brace-match forward
-/// with string/escape awareness, parse.
+/// prose around the envelope, and which — since the sampler learned the model's own
+/// dialect — may not be the canonical JSON envelope at all.
+///
+/// ⚠ ASK THE RUNTIME FIRST. This helper used to search for a quoted `"tool_call"` key and
+/// nothing else, so a perfectly well-formed NATIVE call
+/// (`<|tool_call>call:mcp-calc/calc{"a":6,...}<tool_call|>`) parsed as nothing and was
+/// scored the LARGEST violation available. That was correct while "native" implied
+/// "unconstrained"; it stopped being correct the moment the grammar started constraining
+/// native calls, and the instrument would have condemned the very fix it exists to check.
+/// So classification now comes from `kx_toolcall::parse_tool_call` — the runtime's own
+/// authority gate, which accepts every dialect the sampler arms and refuses args that are
+/// not well-formed JSON. The bespoke walker below remains only for a canonical envelope
+/// buried in prose.
+/// The grant set the parser resolves names against — the same tool the serve autogranted.
+/// Used for CLASSIFICATION only; the runtime enforces the real warrant at dispatch.
+fn probe_warrant() -> kx_warrant::WarrantSpec {
+    kx_warrant::WarrantSpec {
+        tool_grants: [kx_warrant::ToolGrant {
+            tool_id: kx_mote::ToolName("mcp-calc/calc".to_string()),
+            tool_version: kx_mote::ToolVersion("1".to_string()),
+        }]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    }
+}
+
 fn tool_call_args(raw: &str) -> Option<serde_json::Value> {
+    if let Ok(Some(call)) = kx_toolcall::parse_tool_call(raw.as_bytes(), &probe_warrant(), 1 << 20)
+    {
+        // A decoded call carries verbatim args the parser already checked are well-formed
+        // JSON, so this only fails for a shape serde cannot map to a Value.
+        return serde_json::from_slice(&call.args_bytes).ok();
+    }
     let key = raw.find("\"tool_call\"")?;
     let start = raw[..key].rfind('{')?;
     let bytes = raw.as_bytes();
@@ -204,7 +234,8 @@ impl ArmOutcome {
         for e in &self.emissions {
             if let Emission::OffEnvelope(raw) = e {
                 out.push(format!(
-                    "proposed a tool OUTSIDE the constrained envelope: {raw:?}"
+                    "the runtime could not decode a grant-legal call with well-formed JSON \
+                     args from: {raw:?}"
                 ));
             }
         }

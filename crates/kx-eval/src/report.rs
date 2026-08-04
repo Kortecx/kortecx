@@ -145,6 +145,15 @@ pub struct Baseline {
     pub spikes: Vec<SpikeMetric>,
 }
 
+/// Below this many scored tasks, a metric's movement is a coin flip rather than a trend,
+/// so a regression is REPORTED but does not gate.
+///
+/// The `long` family has exactly ONE task. On a 12B model its `task_success` is a single
+/// Bernoulli trial: it reads 0 or 1000 and nothing in between, so *every* movement is a
+/// 1000-per-mille swing and any tolerance either gates on noise or gates on nothing. A
+/// number with n=1 is not a trend and must never be published or enforced as one.
+pub const MIN_GATED_N: u32 = 3;
+
 /// One metric that regressed below the baseline.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Regression {
@@ -154,15 +163,65 @@ pub struct Regression {
     pub baseline_per_mille: u32,
     /// The current per-mille (lower).
     pub current_per_mille: u32,
+    /// How many tasks this metric was scored over — the DENOMINATOR. A per-mille without
+    /// it cannot be read: 0 out of 1 and 0 out of 40 are the same number and completely
+    /// different findings.
+    #[serde(default)]
+    pub n: u32,
+    /// Whether this regression GATES (`n >= MIN_GATED_N`) or is advisory only.
+    #[serde(default)]
+    pub gated: bool,
 }
 
 /// The outcome of comparing a run to its baseline.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BaselineComparison {
-    /// Every metric that fell below baseline (minus tolerance).
+    /// Every metric that fell below baseline (minus tolerance), gated and advisory alike.
     pub regressions: Vec<Regression>,
-    /// `true` iff there were no regressions.
+    /// `true` iff no GATED regression occurred. Advisory ones (n below [`MIN_GATED_N`])
+    /// are reported and do not flip this.
     pub ok: bool,
+}
+
+impl BaselineComparison {
+    /// The regressions that gate — enough tasks behind them to mean something.
+    #[must_use]
+    pub fn gated(&self) -> Vec<&Regression> {
+        self.regressions.iter().filter(|r| r.gated).collect()
+    }
+
+    /// The regressions too thin to enforce. Reported so they are never silently dropped:
+    /// a family that rots to zero must be visible even when it cannot be gated.
+    #[must_use]
+    pub fn advisory(&self) -> Vec<&Regression> {
+        self.regressions.iter().filter(|r| !r.gated).collect()
+    }
+}
+
+/// How many tasks each gate was scored over, keyed by gate id.
+///
+/// A suite-wide gate counts every task where the metric applied; a per-family gate
+/// (`task_success@long`) counts only that family's. Derived from the report's own per-task
+/// rows, so it cannot drift from what was actually scored.
+#[must_use]
+pub fn gate_denominators(report: &EvalReport) -> std::collections::BTreeMap<String, u32> {
+    let mut out: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    for task in &report.per_task {
+        for score in &task.scores {
+            if !score.applicable {
+                continue;
+            }
+            *out.entry(score.metric_id.clone()).or_insert(0) += 1;
+            if !task.family.is_empty() {
+                *out.entry(format!(
+                    "{}{}{}",
+                    score.metric_id, FAMILY_GATE_SEP, task.family
+                ))
+                .or_insert(0) += 1;
+            }
+        }
+    }
+    out
 }
 
 /// A full eval report: the corpus identity + env label, the aggregate Gate values (the
@@ -344,6 +403,7 @@ pub fn compare_to_baseline(
             current: report.suite_digest.clone(),
         });
     }
+    let denominators = gate_denominators(report);
     let mut regressions = Vec::new();
     for base in &baseline.gates {
         let current = report
@@ -353,15 +413,26 @@ pub fn compare_to_baseline(
             .map_or(0, |g| g.per_mille);
         // Regression iff current + tolerance < baseline (integer comparison).
         if current.saturating_add(tolerance_per_mille) < base.per_mille {
+            let n = denominators.get(&base.id).copied().unwrap_or(0);
+            // ⚠ A gate the report STOPPED EMITTING reads 0 because it is ABSENT, not
+            // because it was measured low — so its denominator is 0 and the thin-sample
+            // rule must NOT excuse it. Structural loss always gates; only a gate that is
+            // present and merely lower can be advisory.
+            let present = report.gates.iter().any(|g| g.id == base.id);
             regressions.push(Regression {
                 metric_id: base.id.clone(),
                 baseline_per_mille: base.per_mille,
                 current_per_mille: current,
+                n,
+                gated: !present || n >= MIN_GATED_N,
             });
         }
     }
     Ok(BaselineComparison {
-        ok: regressions.is_empty(),
+        // Only GATED regressions flip `ok`. An n=1 family swinging the full 1000 is a
+        // coin flip, and gating on it would either block every capture or force a
+        // tolerance so wide it gates nothing. It stays in `regressions` and is reported.
+        ok: !regressions.iter().any(|r| r.gated),
         regressions,
     })
 }
@@ -420,6 +491,40 @@ mod tests {
         );
     }
 
+    /// A regression on a family too thin to mean anything is REPORTED but does not gate.
+    ///
+    /// `long` has exactly one task, so its `task_success` is a single Bernoulli trial that
+    /// reads 0 or 1000 and nothing between. Gating on that either blocks every capture or
+    /// forces a tolerance so wide it gates nothing — and either way the number would be
+    /// published as a trend when it is a coin flip. It must still be VISIBLE.
+    #[test]
+    fn a_thin_sample_regression_is_reported_but_does_not_gate() {
+        let r = report(); // 2 tasks ⇒ n = 2 < MIN_GATED_N
+        let mut base = r.to_baseline();
+        for g in &mut base.gates {
+            g.per_mille = PER_MILLE;
+        }
+        let cmp = compare_to_baseline(&r, &base, 0).unwrap();
+        assert!(
+            !cmp.regressions.is_empty(),
+            "a thin-sample regression must still be REPORTED — silence would hide a \
+             family rotting to zero"
+        );
+        assert!(
+            cmp.advisory().iter().any(|x| x.metric_id == "task_success"),
+            "with n=2 the task_success regression must be advisory, not gating"
+        );
+        assert!(cmp.gated().is_empty(), "nothing here has n >= MIN_GATED_N");
+        assert!(cmp.ok, "advisory regressions do not fail the capture");
+        // And the denominator is carried, so a reader can see WHY it did not gate.
+        let reg = cmp
+            .regressions
+            .iter()
+            .find(|x| x.metric_id == "task_success")
+            .unwrap();
+        assert_eq!(reg.n, 2);
+    }
+
     #[test]
     fn no_regression_against_self() {
         let r = report();
@@ -427,9 +532,26 @@ mod tests {
         assert!(cmp.ok);
     }
 
+    /// A report with enough tasks for a regression to GATE (see [`MIN_GATED_N`]).
+    fn report_n3() -> EvalReport {
+        aggregate(
+            "golden-v1".into(),
+            "deadbeef".into(),
+            vec![
+                task("a", 1000, 1000),
+                task("b", 0, 500),
+                task("c", 1000, 500),
+            ],
+            &ScoreOutput::gate("format_coverage", 800, ""),
+            &[],
+            "test-env".into(),
+            "sha".into(),
+        )
+    }
+
     #[test]
     fn regression_detected() {
-        let r = report();
+        let r = report_n3();
         let mut base = r.to_baseline();
         // raise the baseline so the current run is now "below" it.
         for g in &mut base.gates {

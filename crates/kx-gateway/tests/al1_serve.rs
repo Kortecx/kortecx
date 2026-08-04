@@ -94,15 +94,11 @@ async fn await_mote_committed(
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF (just fetch-agent-model); opt in with --ignored"]
 async fn invoke_model_recipe_runs_real_inference_to_committed() {
-    let Some(gguf) = serve_model() else {
-        eprintln!(
-            "skipping: no serve model — run `just fetch-agent-model` (or set \
-             KX_SERVE_MODEL_GGUF) first"
-        );
-        return;
-    };
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
     // resolve_serve_model() reads this env at start().
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
 
     let dir = tempfile::TempDir::new().unwrap();
     let running = start(common::gateway_config(&dir, true, HashMap::new()))
@@ -173,14 +169,10 @@ async fn invoke_model_recipe_runs_real_inference_to_committed() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF (just fetch-agent-model); opt in with --ignored"]
 async fn chat_greedy_decode_is_deterministic_across_gateways() {
-    let Some(gguf) = serve_model() else {
-        eprintln!(
-            "skipping: no serve model — run `just fetch-agent-model` (or set \
-             KX_SERVE_MODEL_GGUF) first"
-        );
-        return;
-    };
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
     let prompt = br#"{"prompt":"Name one primary color. Reply with a single word."}"#.to_vec();
 
     // Serve `kx/recipes/chat` on a FRESH gateway and return the committed result_ref.

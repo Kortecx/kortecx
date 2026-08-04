@@ -160,13 +160,13 @@ pub fn parse_permutation(text: &str, n: usize) -> Option<Vec<usize>> {
 }
 
 /// Gemma-4's NATIVE tool-call open delimiter (`<|tool_call>call:NAME{ARGS}<tool_call|>`).
-const GEMMA_TOOL_OPEN: &str = "<|tool_call>";
+const GEMMA_TOOL_OPEN: &str = crate::dialect::GEMMA_OPEN_LIT;
 /// Gemma-4's NATIVE tool-call CLOSE delimiter — optional + truncation-tolerant for a
 /// SINGLE call, but consumed between segments when a model emits a BATCH of native
 /// calls back-to-back (T-MULTI-ELEMENT-TOOLCALLS).
-const GEMMA_TOOL_CLOSE: &str = "<tool_call|>";
+const GEMMA_TOOL_CLOSE: &str = crate::dialect::GEMMA_CLOSE_LIT;
 /// The optional `call:` marker after the open delimiter (observed: `call:fs_list{}`).
-const GEMMA_CALL_MARKER: &str = "call:";
+const GEMMA_CALL_MARKER: &str = crate::dialect::GEMMA_CALL_MARKER_LIT;
 
 /// A model-NATIVE (non-envelope) call shape, post-extraction: the raw tool name
 /// and the args-object bytes. The args are BORROWED for the brace form
@@ -482,15 +482,29 @@ fn parse_paren_args(inner: &str) -> Option<String> {
 }
 
 /// Llama-3.1/3.2's native tool-call open delimiter (`<|python_tag|>{"name":…}`).
-const PYTHON_TAG_OPEN: &str = "<|python_tag|>";
+const PYTHON_TAG_OPEN: &str = crate::dialect::PYTHON_TAG_OPEN_LIT;
 /// Qwen3/Hermes XML-ish tool-call open tag (`<tool_call>{"name":…}</tool_call>`).
 /// DISTINCT from Gemma's `<|tool_call>` (note the `|`): `strip_prefix` is exact, so
 /// the two delimiters never collide, and the Gemma arm runs first.
-const XML_TOOL_OPEN: &str = "<tool_call>";
+const XML_TOOL_OPEN: &str = crate::dialect::HERMES_OPEN_LIT;
 /// Qwen3/Hermes XML-ish tool-call CLOSE tag — consumed between segments when a model
 /// emits a BATCH of `<tool_call>{…}</tool_call><tool_call>{…}</tool_call>` calls
 /// (T-MULTI-ELEMENT-TOOLCALLS). `<|python_tag|>` has no close delimiter.
-const XML_TOOL_CLOSE: &str = "</tool_call>";
+const XML_TOOL_CLOSE: &str = crate::dialect::HERMES_CLOSE_LIT;
+
+// ★ THE PURITY PROOF for moving those six definitions into `crate::dialect`.
+//
+// The refactor introduced no new branch and no new call — every arm still hands the same
+// `&'static str` to the same function — so the entire proof obligation reduces to "these
+// six values are unchanged", and these six lines discharge it AT COMPILE TIME. If a table
+// edit ever changes what the parser accepts, this fails to build rather than shipping a
+// grammar that arms on bytes the parser will refuse.
+const _: () = assert!(crate::dialect::str_eq(GEMMA_TOOL_OPEN, "<|tool_call>"));
+const _: () = assert!(crate::dialect::str_eq(GEMMA_TOOL_CLOSE, "<tool_call|>"));
+const _: () = assert!(crate::dialect::str_eq(GEMMA_CALL_MARKER, "call:"));
+const _: () = assert!(crate::dialect::str_eq(PYTHON_TAG_OPEN, "<|python_tag|>"));
+const _: () = assert!(crate::dialect::str_eq(XML_TOOL_OPEN, "<tool_call>"));
+const _: () = assert!(crate::dialect::str_eq(XML_TOOL_CLOSE, "</tool_call>"));
 
 /// Strip a DEFINED open delimiter, then return the brace-balanced inner `{ … }`
 /// object that follows it (after optional whitespace) — or `None`. Shared by the
@@ -660,6 +674,31 @@ fn resolve_granted_name(raw_name: &str, warrant: &WarrantSpec) -> Option<ToolGra
         NameResolution::Unique(grant) => Some(grant),
         NameResolution::Unresolved | NameResolution::Ambiguous(_) => None,
     }
+}
+
+/// True iff `tool_id`, emitted BARE and VERSION-LESS the way a native dialect spells it,
+/// resolves back to exactly ONE member of `granted_ids` under the SAME rules
+/// `resolve_name` uses.
+///
+/// **Why the grammar renderer needs this.** The native dialects carry no version, so a
+/// GBNF branch that pins a bare name is only safe when that name is unambiguous. Two
+/// grants of one tool at different versions, or a grant set holding both `fs` and
+/// `fs/list` (where `id_matches` makes the bare `fs` address both), would give the model
+/// a branch the grammar makes *reachable* and the parser then answers with a LOUD
+/// [`DecodeError::Ambiguous`] — a grammar that manufactures refusals. Sharing this
+/// predicate with the parser keeps "the grammar can only produce calls the parser
+/// accepts" mechanical instead of asserted.
+#[must_use]
+pub fn native_name_resolves_uniquely(tool_id: &str, granted_ids: &[&str]) -> bool {
+    let target = model_name_core(tool_id);
+    if target.is_empty() {
+        return false;
+    }
+    granted_ids
+        .iter()
+        .filter(|id| id_matches(&target, id))
+        .count()
+        == 1
 }
 
 /// Resolve a COMMITTED (marked/native/envelope) tool name to its unique grant, mapping

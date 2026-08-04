@@ -47,6 +47,10 @@ impl LlamaBackend {
     pub fn new() -> Result<Self, LlamaError> {
         let mut guard = BACKEND_INIT_LOCK.lock().expect("poisoned backend lock");
         if *guard == 0 {
+            // Install the grammar-engagement log sink BEFORE init, so llama.cpp's
+            // init-time diagnostics keep flowing through the same callback rather than
+            // switching sinks mid-stream. Idempotent and never uninstalled.
+            crate::log::install();
             // SAFETY: llama_backend_init is documented as safe to call once; the
             // mutex above serializes any racing init calls.
             unsafe { sys::llama_backend_init() };

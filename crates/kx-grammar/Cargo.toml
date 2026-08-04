@@ -15,13 +15,18 @@ path = "src/lib.rs"
 # InputSchema / ParamType / ParamSpec — the closed, integer-/bytes-typed tool
 # arg contract the per-tool (stretch) grammar is rendered from.
 kx-tool-registry = { workspace = true }
+# The tool-call DIALECT table + the parser's own version-less name-resolution
+# predicate. A dependency (not just dev) because the GBNF root now alternates over
+# the same dialects the parser accepts and the sampler arms on: one table, so a
+# grammar can never make reachable a shape the parser would refuse. Acyclic —
+# kx-toolcall depends only on kx-mote/kx-warrant/serde.
+kx-toolcall      = { workspace = true }
 serde            = { workspace = true }
 serde_json       = { workspace = true, features = ["raw_value"] }
 
 [dev-dependencies]
 # Round-trip contract: a rendered envelope must be ACCEPTED by the real
 # authority-gate parser. Building a WarrantSpec to feed it needs these.
-kx-toolcall = { workspace = true }
 kx-warrant  = { workspace = true }
 kx-mote     = { workspace = true }
 kx-content  = { workspace = true }

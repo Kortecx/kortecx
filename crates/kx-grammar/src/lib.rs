@@ -50,3 +50,24 @@ pub use carrier::GrammarSpec;
 pub use error::GrammarError;
 pub use permutation::PermutationSpec;
 pub use spec::{ToolEnvelopeSpec, ToolSpec};
+
+/// The llama.cpp lazy-grammar trigger patterns for `dialects`, in table order.
+///
+/// **Arm these with the grammar [`ToolEnvelopeSpec::to_gbnf_for`] rendered over the SAME
+/// slice.** llama.cpp feeds the grammar the text starting at a trigger's first capture
+/// group and replays the already-sampled tokens into it; `llama_grammar_accept_token`
+/// throws when the grammar cannot accept them and nothing catches it before the C
+/// boundary. So a trigger without its branch is not a missed optimisation — it is a
+/// process abort. Both sides read one table and neither stores the pattern, which is why
+/// they cannot drift.
+///
+/// A dialect whose delimiters are not safe to embed is skipped here exactly as it is
+/// skipped by the renderer.
+#[must_use]
+pub fn tool_call_trigger_patterns(dialects: &[kx_toolcall::ToolDialect]) -> Vec<String> {
+    dialects
+        .iter()
+        .filter(|d| d.is_well_formed())
+        .map(kx_toolcall::ToolDialect::trigger_pattern)
+        .collect()
+}

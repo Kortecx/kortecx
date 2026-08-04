@@ -23,7 +23,7 @@ A score is an integer **per-mille** (`0..=1000`) — a rate on a 0–1000 scale 
 never a count — and a gate pass/fail is an exact integer comparison, never a float. An
 aggregate is the **floor** of the integer mean over the tasks the metric applied to, so
 resolution follows the denominator: a one-task family can only read 0 or 1000, a three-task
-family only 0 · 333 · 666 · 1000, and the 32-task suite moves in steps of ~31. Where a
+family only 0 · 333 · 666 · 1000, and the 46-task suite moves in steps of ~22. Where a
 metric is pass/fail per unit (`task_success` everywhere, `injection_resistance`,
 `tool_seq_fsa`, `pass_k4` per flagship task, and `retrieval_success_at_8` per query), the
 published tables print the exact fraction beside the rate — `666 · 2/3` is two of three
@@ -168,19 +168,15 @@ above), held to this table by `check-docs`.
 | --- | ---: | --- | ---: | ---: |
 | `tool` | 6 | The agent picks the right tool and its answer carries a fact only the tool could supply — including chaining one tool's output into the next call. | 1000 · 6/6 | 1000 · 6/6 |
 | `react` | 3 | Whether to use a tool at all: an instruction naming a tool the run was never granted fires **nothing** (naming is not granting), a fact with no world-knowledge prior *is* looked up, and a question the model already knows is answered without reaching for anything. | 1000 · 3/3 | 1000 · 3/3 |
-| `script` | 3 | The agent runs a registered script in the sandbox and answers from what it computed. | 1000 · 3/3 | 666 · 2/3 |
-| `reach` | 3 | How far the runtime reaches beyond the prompt: a [dataset](./datasets.md) it searches, a [memory](./memory.md) it recalls, and an app whose capability set is inherited rather than declared. | 1000 · 3/3 | 666 · 2/3 |
+| `reach` | 3 | How far the runtime reaches beyond the prompt: a [dataset](./datasets.md) it searches, a [memory](./memory.md) it recalls, and an app whose capability set is inherited rather than declared. | 1000 · 3/3 | 1000 · 3/3 |
 | `swarm` | 1 | N agents run in parallel and a gather merges their committed outputs — the answer must carry every agent's contribution. | 1000 · 1/1 | 1000 · 1/1 |
-| `http` | 2 | A tool reached over the **network**, not a bundled subprocess: the runtime dials it over HTTP, presents a bearer credential resolved at dispatch, and pages through a result set whose answer is on the second page. | 1000 · 2/2 | 500 · 1/2 |
-| `failure` | 4 | Tools that error, hang, and return unusable payloads. The loop must surface the failure and let the model take another turn — and a healthy control fails if it starts distrusting every tool. | 750 · 3/4 | 750 · 3/4 |
+| `http` | 2 | A tool reached over the **network**, not a bundled subprocess: the runtime dials it over HTTP, presents a bearer credential resolved at dispatch, and pages through a result set whose answer is on the second page. | 1000 · 2/2 | 1000 · 2/2 |
+| `failure` | 4 | Tools that error, hang, and return unusable payloads. The loop must surface the failure and let the model take another turn — and a healthy control fails if it starts distrusting every tool. | 750 · 3/4 | 1000 · 4/4 |
 | `menu` | 1 | Selection when the menu is as long as the runtime will present, rather than a choice between two obvious options. | 1000 · 1/1 | 1000 · 1/1 |
-| `long` | 1 | The longest chain the runtime admits: six tool calls across four distinct tools, inside the eight-turn ceiling. | 1000 · 1/1 | 0 · 0/1 |
+| `long` | 1 | The longest chain the runtime admits: six tool calls across four distinct tools, inside the eight-turn ceiling. | 1000 · 1/1 | 1000 · 1/1 |
 | `adversarial` | 2 | Input that is trying to steer the agent — including an instruction planted in a **tool's output** — paired with a legitimate request that merely looks like one. | 1000 · 2/2 | 1000 · 2/2 |
 | `irrelevance` | 4 | Relevance detection, BFCL-style: two requests nothing on the granted menu can serve (an email send, a live weather read) where the correct move is to fire nothing and say so — beside two near-identically-phrased look-alikes a granted tool must serve, so an always-refuse policy fails the pair. | 750 · 3/4 | 1000 · 4/4 |
 | `memory` | 2 | LongMemEval-shaped, judge-free: a knowledge update whose superseded value stays live in the store (recall surfaces the conflict; the run must answer the NEW value), and an abstention when memory holds no answer. | 1000 · 2/2 | 1000 · 2/2 |
-| `scaffold` | 2 | Generated-app reach: the model plans and authors an entire project LIVE on this serve (one task per scheduled lane — contextual and codified), the app is then RUN, and the answer must carry an activation code that exists **only** inside the generated files — underivable unless the project actually reached the run's context. | 0 · 0/2 | 0 · 0/2 |
-| `workflow` | 7 | A STORED workflow definition run by handle — canonical saved bytes, every warrant built server-side at run — through deterministic step kinds: a credentialed http dial, a three-way parallel quorum join, a typed conditional whose untaken arm commits a distinguished skip sentinel and provably never dials its endpoint (the high/low pair is scored as one property), a journal-backed 3-second timer that carries its parent's committed bytes, a flaky depot that answers only a FRESH retry identity, and a permanently-down branch under `continue` whose placeholder the join releases past. Every step is deterministic and every oracle token exists only on the harness fixture — the family measures the **runtime**, never the model. | 1000 · 7/7 | 1000 · 7/7 |
-| `nlauthor` | 5 | Authoring the runtime itself from one sentence of English: a durable policy role, a scheduled trigger, and a credential. The proposal returns the **exact typed request** the runtime would issue, so approving forwards the bytes that were displayed rather than a re-derivation — and the secret arm proves a value never rides the preview, only its name. The family carries a refusal (a role naming a tool nobody registered) beside a near-identical ask that must SUCCEED, so a surface that refused everything would score zero, not full marks. | 800 · 4/5 | 800 · 4/5 |
 
 Each family reports its own gate (`task_success@swarm`) beside the suite-wide one, so a
 regression in one capability is visible instead of being averaged away by the others.
@@ -207,6 +203,13 @@ healthy control sits inside the family.
 
 ### The scaffold family measures the app the model builds {#scaffold}
 
+**Not published per-family.** `scaffold` measures code AUTHORING rather than agentic
+execution, so its score is not in the tables above — like `nlauthor`, `workflow` and
+`script`, it is measured every capture, and its contribution to the suite-wide figure is published as part of the disclosed aggregate. Its tasks are
+counted in the withheld aggregate beside the chart, and CI checks that aggregate against the
+committed baselines, so the family cannot quietly stop being scored. The methodology below
+is published because it explains how the suite works.
+
 `task_success@scaffold` drives the whole generated-app pipeline live: the model plans the
 project, authors every file (a 20-minute scaffold budget — planning plus per-file decodes
 on a 12B are minutes each; the suite's settle budget covers only the RUN that follows),
@@ -220,11 +223,10 @@ cannot leak in from anywhere else.
 per-mille of scaffold attempts that reached `done` within budget. A gate of 0 with the
 sentinel at 0 says the scaffolds never finished (the model ran out of its writing budget);
 a gate of 0 with a non-zero sentinel says at least one project was fully written and run,
-and the failure moved downstream into the run's grounding. The current captures show both
-shapes: Ollama 0 with sentinel 0 (both scaffolds timed out mid-write), llama.cpp 0 with
-sentinel 500 (the contextual project completed all seven files and ran — and the answer
-still failed to ground in the project it had just written). Per-scaffold durations and
-file counts are committed as ungated Spikes beside the gate.
+and the failure moved downstream into the run's grounding. The two shapes are what the
+sentinel exists to separate, and the current captures contain both. Per-scaffold durations
+and file counts are committed as ungated Spikes beside the gate; the family's own per-engine
+results are not published here, for the reason given under Scope.
 
 **Hosted apps are excluded, by construction rather than choice.** The family scores an
 app by RUNNING it and grading the run's committed answer; a hosted app has no blueprint

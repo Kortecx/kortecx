@@ -371,6 +371,52 @@ fetch-2nd-model:
     echo " ✓ saved: $DEST (sha256 $got)"
     echo "   Serve BOTH (primary Gemma + this): KX_SERVE_MODEL_GGUF=<abs gemma> KX_SERVE_MODELS=<abs $DEST> just review-serve-gemma"
 
+# THE MODEL-ONBOARDING GATE. Can this runtime drive a given model agentically?
+#
+#   just model-conformance ~/.kx-models/qwen2.5-3b-instruct-q4_k_m.gguf
+#
+# Answers, in one run and with no code change for a model nobody hard-coded:
+#   dialect     — does the model DECLARE how it spells a tool call (its own chat
+#                 template), and did we read it? A model that declares nothing falls
+#                 back to the known set and says so.
+#   engagement  — does the sampler actually ENGAGE on what the model emits? Read from
+#                 llama.cpp's own log, so a zero means the event did not happen rather
+#                 than that we failed to look.
+#   prose-mask  — does it stay OFF ordinary prose? A trigger that fires too eagerly
+#                 masks an answer as a tool call and is worse than one that never fires.
+#   tool-call   — are the emitted arguments well-formed and grant-legal?
+#
+# FAILS rather than skips when the model is missing: a skip reads exactly like a pass.
+# For the agentic stage, follow with the filtered bench drive named in the output.
+# Can this runtime drive a given GGUF agentically? (dialect, engagement, prose, args)
+model-conformance model:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    MODEL="{{model}}"
+    if [ ! -f "$MODEL" ]; then
+      echo " x model not found: $MODEL" >&2; exit 1
+    fi
+    echo "=== model conformance: $MODEL"
+    # One engine per run: this drives the GGUF in-process, so an ambient Ollama daemon
+    # must not be allowed to answer instead (unset means `auto`, which is ON here).
+    KX_SERVE_OLLAMA=off \
+    KX_CONFORMANCE_GGUF="$MODEL" \
+      cargo test -p kx-inference --features llamacpp --test model_conformance \
+        -- --ignored --nocapture --test-threads=1
+    rc=$?
+    echo
+    if [ $rc -eq 0 ]; then
+      echo "VERDICT: SUPPORTED — $MODEL"
+      echo "  next, for the agentic stage:"
+      echo "    KX_SERVE_OLLAMA=off KX_SERVE_MODEL_GGUF=$MODEL KX_SERVE_MEMORY=1 \\"
+      echo "      KX_BENCH_ONLY=http-paginated-roster,long-horizon-fleet-audit \\"
+      echo "      cargo test -p kx-gateway --features inference,hnsw,observability \\"
+      echo "      --test eval_bench_real -- --ignored --nocapture --test-threads=1"
+    else
+      echo "VERDICT: NOT SUPPORTED — $MODEL (see the failing stage above)"
+    fi
+    exit $rc
+
 # The ONE-COMMAND inference serve ( guardrail): fetch the stand-in model
 # if absent (idempotent, checksum-verified), then start `kx serve` with it +
 # the embedded console at :8888. Model paths are DETERMINISTIC

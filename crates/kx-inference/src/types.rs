@@ -325,3 +325,24 @@ pub enum InferenceError {
         content_ref: ContentRef,
     },
 }
+
+/// What tool-call dialects a model will be armed with, and where they came from.
+///
+/// This is the runtime's public answer to *"do you understand how this model spells a
+/// tool call?"* — the question that decides whether a new model works out of the box.
+/// Before dialects were derived, that question had no answer at all: the sampler armed one
+/// hard-coded opener, a model using its own syntax silently generated unconstrained
+/// arguments, and every check stayed green because the tolerant parser recovered the call.
+#[cfg(feature = "llamacpp")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelDialects {
+    /// The dialect read from the model's OWN chat template. `Some` means the model
+    /// declared how it spells a call and the runtime is armed for exactly that. `None`
+    /// means the template never mentions tool calls, so the fallback set is armed — an
+    /// honest "the model did not tell us", never a guess.
+    pub derived: Option<kx_toolcall::ToolDialect>,
+    /// Every dialect that will be armed for this model, in arming order. Always contains
+    /// the runtime's own canonical envelope, because the `ReAct` prompt teaches it and a
+    /// model may obey the prompt rather than its template.
+    pub armed: Vec<kx_toolcall::ToolDialect>,
+}

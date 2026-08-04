@@ -53,13 +53,10 @@ async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF (just fetch-agent-model); opt in with --ignored"]
 async fn autogrant_serve_provisions_react_auto_and_drives_a_live_chain() {
-    let Some(gguf) = serve_model() else {
-        eprintln!(
-            "skipping: no serve model — run `just fetch-agent-model` (or set KX_SERVE_MODEL_GGUF)"
-        );
-        return;
-    };
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
     std::env::set_var("KX_SERVE_AUTOGRANT", "1");
 
     let dir = tempfile::TempDir::new().unwrap();
@@ -160,11 +157,10 @@ async fn autogrant_serve_provisions_react_auto_and_drives_a_live_chain() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF; opt in with --ignored"]
 async fn react_auto_dialed_tool_resolves_and_the_chain_settles() {
-    let Some(gguf) = serve_model() else {
-        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF (a real GGUF)");
-        return;
-    };
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
     std::env::set_var("KX_SERVE_AUTOGRANT", "1");
 
     let dir = tempfile::TempDir::new().unwrap();
@@ -299,11 +295,10 @@ async fn react_auto_dialed_tool_resolves_and_the_chain_settles() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a Gemma GGUF; opt in with --ignored"]
 async fn react_auto_w2_tool_looper_reaches_a_terminal_via_nudge_or_honest_deadletter() {
-    let Some(gguf) = serve_model() else {
-        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF (a real GGUF)");
-        return;
-    };
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
     std::env::set_var("KX_SERVE_AUTOGRANT", "1");
 
     let dir = tempfile::TempDir::new().unwrap();
@@ -435,11 +430,10 @@ async fn await_committed_ref(
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a Gemma GGUF; opt in with --ignored"]
 async fn react_auto_carries_attached_context_to_a_successor_turn() {
-    let Some(gguf) = serve_model() else {
-        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF (a real GGUF)");
-        return;
-    };
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
     std::env::set_var("KX_SERVE_AUTOGRANT", "1");
 
     let dir = tempfile::TempDir::new().unwrap();

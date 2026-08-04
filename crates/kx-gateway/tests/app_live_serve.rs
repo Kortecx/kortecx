@@ -113,13 +113,10 @@ fn echo_app_run_request() -> proto::SubmitWorkflowRequest {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally); opt in with --ignored"]
 async fn app_catalog_round_trips_and_runs_on_a_live_model() {
-    let Some(gguf) = serve_model() else {
-        eprintln!(
-            "skipping: no serve model — set KX_SERVE_MODEL_GGUF (a real GGUF, Gemma-4 locally)"
-        );
-        return;
-    };
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
     // The agentic step's echo grant resolves from the live registry (autogrant).
     std::env::set_var("KX_SERVE_AUTOGRANT", "1");
 

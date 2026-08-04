@@ -74,16 +74,23 @@ fn drive(backend: &dyn InferenceBackend, model_id: &ModelId, warrant: &WarrantSp
 #[cfg(feature = "with-model")]
 fn rerank_live_llamacpp() {
     use kx_inference::LlamaInferenceBackend;
-    use kx_model_harness::model_id_for;
-    use std::path::PathBuf;
+    use kx_model_harness::{default_gguf_path, model_id_for};
 
-    let gguf = PathBuf::from(
-        std::env::var("KX_RERANK_GGUF")
-            .unwrap_or_else(|_| "target/models/gemma-4-12b-it-q4_k_m.gguf".to_string()),
-    );
+    // Resolve through THIS crate's own resolver, the one every other live test here uses.
+    //
+    // ⚠ It used to read a bespoke `KX_RERANK_GGUF` and fall back to the RELATIVE path
+    // `target/models/…`, which resolves against the test binary's cwd (the crate dir), not
+    // the workspace root — so the fallback could never find the file even when it existed,
+    // and this oracle was dead on any clean tree. `default_gguf_path` is
+    // `CARGO_MANIFEST_DIR`-relative and honours `KX_MODEL_HARNESS_GGUF`.
+    //
+    // ⚠ Behaviour change: the default filename now follows `KX_MODEL_NAME`, so driving
+    // Gemma means `KX_MODEL_HARNESS_GGUF=<abs path to the Gemma GGUF>`.
+    let gguf = default_gguf_path();
     assert!(
         gguf.exists(),
-        "Gemma GGUF not found at {gguf:?} (run `just fetch-gemma-model`)"
+        "GGUF not found at {gguf:?} — set KX_MODEL_HARNESS_GGUF to the model to rerank \
+         with (e.g. the Gemma GGUF), or KX_MODEL_NAME to name one under target/models/"
     );
     let model_id = model_id_for(&gguf).unwrap();
     let warrant = harness_warrant(&model_id, 512, 120_000);

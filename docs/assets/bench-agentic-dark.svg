@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 517" width="900" height="517" role="img" aria-labelledby="t d" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">
+<title id="t">Agentic task_success by family, Ollama versus llama.cpp</title>
+<desc id="d">task_success per-mille by capability family, Ollama versus llama.cpp, captured at 1f4c5b88f702. Agentic aggregate 931 versus 1000 over 29 tasks.</desc>
+<defs><pattern id="z" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="6" stroke="#94a1ad" stroke-width="2" opacity=".45"/></pattern></defs>
+<rect x="179" y="12" width="20" height="10" rx="2" fill="#4fb3ac"/>
+<text x="206" y="21" font-size="11.5" fill="#e7ecf1">Ollama gemma4:12b</text>
+<rect x="321.8" y="12" width="20" height="10" rx="2" fill="#d98cae"/>
+<text x="348.8" y="21" font-size="11.5" fill="#e7ecf1">llama.cpp kx-serve:gemma-4-12b-it-q4_k_m</text>
+<rect x="611.8" y="12" width="20" height="10" rx="2" fill="url(#z)"/>
+<text x="638.8" y="21" font-size="11.5" fill="#94a1ad">scored zero</text>
+<line x1="0" y1="36" x2="900" y2="36" stroke="#242e39" stroke-width="1"/>
+<line x1="340.3" y1="46" x2="340.3" y2="495" stroke="#1b232c" stroke-width="1"/>
+<text x="340.3" y="509" font-size="10" fill="#94a1ad" text-anchor="middle">250</text>
+<line x1="501.5" y1="46" x2="501.5" y2="495" stroke="#1b232c" stroke-width="1"/>
+<text x="501.5" y="509" font-size="10" fill="#94a1ad" text-anchor="middle">500</text>
+<line x1="662.8" y1="46" x2="662.8" y2="495" stroke="#1b232c" stroke-width="1"/>
+<text x="662.8" y="509" font-size="10" fill="#94a1ad" text-anchor="middle">750</text>
+<line x1="824.0" y1="46" x2="824.0" y2="495" stroke="#1b232c" stroke-width="1"/>
+<text x="824.0" y="509" font-size="10" fill="#94a1ad" text-anchor="middle">1000</text>
+<g data-family="adversarial" data-n="2" data-a="1000" data-b="1000">
+<text x="165" y="69" font-size="12" fill="#e7ecf1" text-anchor="end">adversarial</text>
+<text x="165" y="82" font-size="10.5" fill="#94a1ad" text-anchor="end">n=2</text>
+<rect x="179" y="58" width="645.0" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="73" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="68" font-size="11" fill="#4fb3ac" text-anchor="end">1000</text>
+<text x="888" y="83" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+<g data-family="http" data-n="2" data-a="1000" data-b="1000">
+<text x="165" y="108" font-size="12" fill="#e7ecf1" text-anchor="end">http</text>
+<text x="165" y="121" font-size="10.5" fill="#94a1ad" text-anchor="end">n=2</text>
+<rect x="179" y="97" width="645.0" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="112" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="107" font-size="11" fill="#4fb3ac" text-anchor="end">1000</text>
+<text x="888" y="122" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+<g data-family="long" data-n="1" data-a="1000" data-b="1000">
+<text x="165" y="147" font-size="12" fill="#e7ecf1" text-anchor="end">long</text>
+<text x="165" y="160" font-size="10.5" fill="#94a1ad" text-anchor="end">n=1</text>
+<rect x="179" y="136" width="645.0" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="151" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="146" font-size="11" fill="#4fb3ac" text-anchor="end">1000</text>
+<text x="888" y="161" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+<g data-family="memory" data-n="2" data-a="1000" data-b="1000">
+<text x="165" y="186" font-size="12" fill="#e7ecf1" text-anchor="end">memory</text>
+<text x="165" y="199" font-size="10.5" fill="#94a1ad" text-anchor="end">n=2</text>
+<rect x="179" y="175" width="645.0" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="190" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="185" font-size="11" fill="#4fb3ac" text-anchor="end">1000</text>
+<text x="888" y="200" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+<g data-family="menu" data-n="1" data-a="1000" data-b="1000">
+<text x="165" y="225" font-size="12" fill="#e7ecf1" text-anchor="end">menu</text>
+<text x="165" y="238" font-size="10.5" fill="#94a1ad" text-anchor="end">n=1</text>
+<rect x="179" y="214" width="645.0" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="229" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="224" font-size="11" fill="#4fb3ac" text-anchor="end">1000</text>
+<text x="888" y="239" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+<g data-family="reach" data-n="3" data-a="1000" data-b="1000">
+<text x="165" y="264" font-size="12" fill="#e7ecf1" text-anchor="end">reach</text>
+<text x="165" y="277" font-size="10.5" fill="#94a1ad" text-anchor="end">n=3</text>
+<rect x="179" y="253" width="645.0" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="268" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="263" font-size="11" fill="#4fb3ac" text-anchor="end">1000</text>
+<text x="888" y="278" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+<g data-family="react" data-n="3" data-a="1000" data-b="1000">
+<text x="165" y="303" font-size="12" fill="#e7ecf1" text-anchor="end">react</text>
+<text x="165" y="316" font-size="10.5" fill="#94a1ad" text-anchor="end">n=3</text>
+<rect x="179" y="292" width="645.0" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="307" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="302" font-size="11" fill="#4fb3ac" text-anchor="end">1000</text>
+<text x="888" y="317" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+<g data-family="swarm" data-n="1" data-a="1000" data-b="1000">
+<text x="165" y="342" font-size="12" fill="#e7ecf1" text-anchor="end">swarm</text>
+<text x="165" y="355" font-size="10.5" fill="#94a1ad" text-anchor="end">n=1</text>
+<rect x="179" y="331" width="645.0" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="346" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="341" font-size="11" fill="#4fb3ac" text-anchor="end">1000</text>
+<text x="888" y="356" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+<g data-family="tool" data-n="6" data-a="1000" data-b="1000">
+<text x="165" y="381" font-size="12" fill="#e7ecf1" text-anchor="end">tool</text>
+<text x="165" y="394" font-size="10.5" fill="#94a1ad" text-anchor="end">n=6</text>
+<rect x="179" y="370" width="645.0" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="385" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="380" font-size="11" fill="#4fb3ac" text-anchor="end">1000</text>
+<text x="888" y="395" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+<g data-family="failure" data-n="4" data-a="750" data-b="1000">
+<text x="165" y="420" font-size="12" fill="#e7ecf1" text-anchor="end">failure</text>
+<text x="165" y="433" font-size="10.5" fill="#94a1ad" text-anchor="end">n=4</text>
+<rect x="179" y="409" width="483.8" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="424" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="419" font-size="11" fill="#4fb3ac" text-anchor="end">750</text>
+<text x="888" y="434" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+<g data-family="irrelevance" data-n="4" data-a="750" data-b="1000">
+<text x="165" y="459" font-size="12" fill="#e7ecf1" text-anchor="end">irrelevance</text>
+<text x="165" y="472" font-size="10.5" fill="#94a1ad" text-anchor="end">n=4</text>
+<rect x="179" y="448" width="483.8" height="11" rx="2" fill="#4fb3ac"/>
+<rect x="179" y="463" width="645.0" height="11" rx="2" fill="#d98cae"/>
+<text x="888" y="458" font-size="11" fill="#4fb3ac" text-anchor="end">750</text>
+<text x="888" y="473" font-size="11" fill="#d98cae" text-anchor="end">1000</text>
+</g>
+</svg>

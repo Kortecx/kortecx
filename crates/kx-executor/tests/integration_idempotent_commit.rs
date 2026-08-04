@@ -279,86 +279,81 @@ fn broker_dispatch_error_wraps_as_broker_dispatch_failed() {
 }
 
 // ============================================================================
-// StageThenCommit returns Internal { reason: "PR 9b-4 ..." } stub.
+// Dispatch-table TOTALITY: every EffectPattern reaches real code.
 // ============================================================================
 
-// Note: the StageThenCommit path now ships in PR 9b-4; this stub-shape
-// test is superseded by `tests/integration_stage_then_commit.rs`.
+/// Every [`EffectPattern`] must dispatch to an implemented path — never to a
+/// "not implemented yet" stub.
+///
+/// **What this replaces, and why it is not a deletion.** Two tests used to assert that
+/// `StageThenCommit` and `ValidateThenCommit` returned `Internal { reason: "PR 9b-4 …" }`
+/// stubs. Both paths shipped; the stub strings have ZERO emission sites in `src/` today,
+/// so those tests were `#[ignore]`d AND inverted — un-ignoring either one fails at its
+/// `expect_err`, because the path now succeeds.
+///
+/// Deleting them outright would have removed the only check that a NEW variant added to
+/// the enum falls through to a stub — the exact regression they were written for, just
+/// aimed at a target that has moved. So the assertion is inverted to match reality and
+/// widened to the whole table.
+///
+/// Deliberately WEAK: it does not re-assert the happy path. `integration_stage_then_commit`
+/// and `integration_validate_then_commit` own that, exhaustively. This owns one property
+/// they cannot: that the dispatch table has no unimplemented arm.
+///
+/// Runs unignored in a plain `cargo test` — no model, no network.
 #[test]
-#[ignore = "superseded by integration_stage_then_commit::stage_then_commit_path_commits_correctly (PR 9b-4 ships the path)"]
-fn stage_then_commit_returns_internal_pr_9b_4_placeholder() {
-    let store = Arc::new(InMemoryContentStore::new());
-    let journal = Arc::new(InMemoryJournal::new());
-    let broker = Arc::new(TestBroker(BrokerMode::HappyPath {
-        store: store.clone(),
-        response_bytes: b"unused".to_vec(),
-    }));
-    let protocol = StandardCommitProtocol::new(store, journal, broker);
-
-    let mut mote = wm_idempotent_mote(0x04);
-    let mut def = mote.def.clone();
-    def.effect_pattern = EffectPattern::StageThenCommit;
-    mote = Mote::new(
-        def,
-        mote.input_data_id,
-        mote.graph_position.clone(),
-        mote.parents.clone(),
-    );
-    let warrant = warrant();
-    let err = protocol
-        .commit(input_for(&mote, &warrant, "stage-then-commit"))
-        .expect_err("StageThenCommit is unimplemented in PR 9b-3");
-    match err {
-        CommitProtocolError::Internal { mote_id, reason } => {
-            assert_eq!(mote_id, mote.id);
-            assert!(
-                reason.contains("PR 9b-4"),
-                "stub must reference PR 9b-4 for forward visibility; got: {reason}",
-            );
+fn every_effect_pattern_dispatches_to_an_implemented_path() {
+    // Listed explicitly rather than iterated, so ADDING a variant to `EffectPattern` is a
+    // compile error here (non-exhaustive match) rather than a silently unchecked arm.
+    let patterns = {
+        fn all(p: EffectPattern) -> EffectPattern {
+            match p {
+                EffectPattern::IdempotentByConstruction
+                | EffectPattern::StageThenCommit
+                | EffectPattern::ValidateThenCommit => p,
+            }
         }
-        other => panic!("expected Internal stub, got {other:?}"),
-    }
-}
+        [
+            all(EffectPattern::IdempotentByConstruction),
+            all(EffectPattern::StageThenCommit),
+            all(EffectPattern::ValidateThenCommit),
+        ]
+    };
 
-// ============================================================================
-// ValidateThenCommit returns Internal { reason: "PR 9b-5 ..." } stub.
-// ============================================================================
+    for (i, pattern) in patterns.into_iter().enumerate() {
+        let store = Arc::new(InMemoryContentStore::new());
+        let journal = Arc::new(InMemoryJournal::new());
+        let broker = Arc::new(TestBroker(BrokerMode::HappyPath {
+            store: store.clone(),
+            response_bytes: b"ok".to_vec(),
+        }));
+        let protocol = StandardCommitProtocol::new(store, journal, broker);
 
-// Note: the ValidateThenCommit path now ships in PR 9b-5; this stub-shape
-// test is superseded by `tests/integration_validate_then_commit.rs`.
-#[test]
-#[ignore = "superseded by integration_validate_then_commit::validate_then_commit_path_commits_correctly (PR 9b-5 ships the path)"]
-fn validate_then_commit_returns_internal_pr_9b_5_placeholder() {
-    let store = Arc::new(InMemoryContentStore::new());
-    let journal = Arc::new(InMemoryJournal::new());
-    let broker = Arc::new(TestBroker(BrokerMode::HappyPath {
-        store: store.clone(),
-        response_bytes: b"unused".to_vec(),
-    }));
-    let protocol = StandardCommitProtocol::new(store, journal, broker);
+        let mote = wm_idempotent_mote(0x10 + i as u8);
+        let mut def = mote.def.clone();
+        def.effect_pattern = pattern;
+        let mote = Mote::new(
+            def,
+            mote.input_data_id,
+            mote.graph_position.clone(),
+            mote.parents.clone(),
+        );
+        let warrant = warrant();
 
-    let mut mote = wm_idempotent_mote(0x05);
-    let mut def = mote.def.clone();
-    def.effect_pattern = EffectPattern::ValidateThenCommit;
-    mote = Mote::new(
-        def,
-        mote.input_data_id,
-        mote.graph_position.clone(),
-        mote.parents.clone(),
-    );
-    let warrant = warrant();
-    let err = protocol
-        .commit(input_for(&mote, &warrant, "validate-then-commit"))
-        .expect_err("ValidateThenCommit is unimplemented in PR 9b-3");
-    match err {
-        CommitProtocolError::Internal { mote_id, reason } => {
-            assert_eq!(mote_id, mote.id);
-            assert!(
-                reason.contains("PR 9b-5"),
-                "stub must reference PR 9b-5 for forward visibility; got: {reason}",
-            );
+        match protocol.commit(input_for(&mote, &warrant, "totality")) {
+            Ok(_) => {}
+            Err(CommitProtocolError::Internal { reason, .. }) if reason.contains("PR 9b-") => {
+                panic!(
+                    "{pattern:?} still dispatches to an unimplemented stub ({reason}). \
+                     Every effect pattern must reach real code."
+                );
+            }
+            Err(other) => panic!(
+                "{pattern:?} failed for an unexpected reason: {other:?}. The happy path is \
+                 owned by integration_stage_then_commit / integration_validate_then_commit; \
+                 this test only asserts the arm is implemented at all."
+            ),
         }
-        other => panic!("expected Internal stub, got {other:?}"),
     }
 }
 

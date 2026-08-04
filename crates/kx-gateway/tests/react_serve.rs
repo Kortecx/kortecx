@@ -63,14 +63,10 @@ async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF (just fetch-agent-model); opt in with --ignored"]
 async fn invoke_react_recipe_drives_a_live_chain_to_answer() {
-    let Some(gguf) = serve_model() else {
-        eprintln!(
-            "skipping: no serve model — run `just fetch-agent-model` (or set \
-             KX_SERVE_MODEL_GGUF) first"
-        );
-        return;
-    };
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
 
     let dir = tempfile::TempDir::new().unwrap();
     let running = start(common::gateway_config(&dir, true, HashMap::new()))
@@ -179,14 +175,10 @@ async fn invoke_react_recipe_drives_a_live_chain_to_answer() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF (just fetch-agent-model); opt in with --ignored"]
 async fn react_invoke_anchor_is_present_in_the_projection() {
-    let Some(gguf) = serve_model() else {
-        eprintln!(
-            "skipping: no serve model — run `just fetch-agent-model` (or set \
-             KX_SERVE_MODEL_GGUF) first"
-        );
-        return;
-    };
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
 
     let dir = tempfile::TempDir::new().unwrap();
     let running = start(common::gateway_config(&dir, true, HashMap::new()))

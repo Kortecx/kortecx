@@ -73,13 +73,10 @@ fn minimal_app_envelope(name: &str, goal: &str) -> Vec<u8> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally); opt in with --ignored"]
 async fn scaffold_writes_the_skeleton_then_lock_refuses_edit() {
-    let Some(gguf) = serve_model() else {
-        eprintln!(
-            "skipping: no serve model — set KX_SERVE_MODEL_GGUF (a real GGUF, Gemma-4 locally)"
-        );
-        return;
-    };
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
 
     let dir = tempfile::TempDir::new().unwrap();
     let running = start(common::gateway_config(&dir, true, HashMap::new()))

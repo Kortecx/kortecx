@@ -34,7 +34,7 @@ use crate::cache::{ModelCache, DEFAULT_CACHE_CAPACITY};
 use crate::content::ContentFetcher;
 use crate::types::{
     check_within, EmbeddingOutput, EmbeddingPooling, InferenceError, InferenceInput,
-    InferenceOutput, InferenceParams,
+    InferenceOutput, InferenceParams, ModelDialects,
 };
 
 /// Backend name reported in `InferenceOutput.backend_name`.
@@ -170,6 +170,46 @@ impl LlamaInferenceBackend {
     #[must_use]
     pub fn loads_performed(&self) -> u64 {
         self.cache.get().map_or(0, ModelCache::loads)
+    }
+
+    /// Which tool-call dialects this backend will arm for `model_id`, and whether the
+    /// model DECLARED its own (via its embedded chat template) or fell back to the known
+    /// set.
+    ///
+    /// The point of onboarding a new model is answering this before spending a benchmark
+    /// on it. Loading the model is required to read its template, so this warms the LRU
+    /// exactly as a dispatch would.
+    ///
+    /// # Errors
+    /// [`InferenceError::ModelNotFound`] if the id does not resolve; a
+    /// [`InferenceError::BackendFailure`] if the model cannot be loaded.
+    pub fn model_dialects(&self, model_id: &ModelId) -> Result<ModelDialects, InferenceError> {
+        let descriptor =
+            self.resolver
+                .resolve(model_id)
+                .ok_or_else(|| InferenceError::ModelNotFound {
+                    model_id: model_id.0.clone(),
+                })?;
+        let cache = self
+            .cache
+            .get_or_init(|| ModelCache::spawn(self.cache_capacity));
+        cache.dialects(descriptor.identity_digest, descriptor.gguf_path.clone())
+    }
+
+    /// Cumulative lazy-grammar engagement on the decoding thread: stages armed, times the
+    /// sampler ENGAGED, tokens it buffered while awaiting a trigger.
+    ///
+    /// Take a DELTA around the dispatch you care about. The three fields together are what
+    /// separates a real zero from a broken instrument: `armed > 0, awaiting > 0,
+    /// engaged == 0` is a trigger that does not match the model's dialect, whereas
+    /// `armed > 0` with both others zero means the log sink never fired and the reading
+    /// proves nothing. Zeros before any dispatch (no owner thread, nothing armed).
+    #[must_use]
+    pub fn grammar_engagement(&self) -> kx_llamacpp::GrammarEngagement {
+        self.cache.get().map_or_else(
+            kx_llamacpp::GrammarEngagement::default,
+            ModelCache::engagement,
+        )
     }
 
     /// Number of cold multi-modal projector (`mmproj`) loads performed so far.
