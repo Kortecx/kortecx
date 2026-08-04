@@ -33,7 +33,7 @@ RENEWER_PID=""
 
 finish() {
     [ -n "$RENEWER_PID" ] && kill "$RENEWER_PID" 2>/dev/null || true
-    ollama stop gemma3:12b >/dev/null 2>&1 || true
+    ollama stop gemma4:12b >/dev/null 2>&1 || true
     bash scripts/model-lease.sh release --label "$LABEL" >/dev/null 2>&1 || true
     echo "exit=$STATUS" > "$DONE"
     echo "══ recapture finished status=$STATUS $(date -u +%Y-%m-%dT%H:%M:%SZ) ══"
@@ -82,6 +82,7 @@ echo "preflight green"
 # ── ARM 1: llama.cpp (in-process) ────────────────────────────────────────────
 # Ollama first stopped: a resident model would starve this arm.
 echo "── arm 1/2: llama.cpp (in-process) ──"
+ollama stop gemma4:12b >/dev/null 2>&1 || true
 ollama stop gemma3:12b >/dev/null 2>&1 || true
 sleep 3
 KX_SERVE_OLLAMA=off KX_SERVE_MEMORY=1 KX_BENCH_UPDATE_BASELINE=1 \
@@ -111,13 +112,16 @@ ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$EMBED" || {
     exit 1
 }
 echo "arm 2 embedder: $EMBED (present)"
-# ⚠ THIS ARM STAYS ON gemma3:12b DELIBERATELY. `corpus/bench-v1/baseline.ollama.json`
-# records `"model": "gemma3:12b"` — it IS a gemma3 capture, so a recapture on any other
-# model is not a recapture, it is a different experiment wearing the same filename.
-# gemma4:12b is the live-serve model everywhere else; moving this arm to it is a
-# baseline-retirement decision, not a default, and it belongs in the wave that owns the
-# one `suite.json` move.
-KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS="${KX_SERVE_OLLAMA_MODELS:-gemma3:12b,embeddinggemma:latest}" \
+# This arm now captures on gemma4:12b — the same model family the llama.cpp arm
+# runs — so the two baselines are finally an engine comparison rather than a model
+# comparison. The old ollama baseline was a gemma3 capture; the reading that
+# replaces it is a FRESH baseline, not a delta: a number printed against the
+# gemma3 capture would be a model swap wearing a movement's clothes.
+# `env -u`: the GGUF vars were EXPORTED for arm 1 and the bench refuses the
+# ambiguous pair (the GGUF would silently become the serve primary while the run
+# records itself as ollama). One engine per run means UNSETTING, not overriding.
+env -u KX_SERVE_MODEL_GGUF -u KX_GEMMA_MODEL_DEST \
+KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS="${KX_SERVE_OLLAMA_MODELS:-gemma4:12b,embeddinggemma:latest}" \
 KX_SERVE_EMBED_MODEL="${KX_SERVE_EMBED_MODEL:-embeddinggemma:latest}" \
 KX_SERVE_MEMORY=1 KX_BENCH_UPDATE_BASELINE=1 \
     cargo test -p kx-gateway --features inference,hnsw,observability \

@@ -175,6 +175,29 @@ describe("scopeProjection", () => {
     expect(out.scopeMissed).toBe(false);
     expect(out.motes).toHaveLength(3);
   });
+
+  it("a missed anchor with a resolvable FALLBACK ⇒ the fallback's component, no banner", () => {
+    // A react Invoke's `chain=` carries the chain SALT (the Timeline's
+    // ListReactTurns key). From a server that returned the discarded seed as the
+    // anchor, the salt resolves to nothing — the run view then retries with
+    // `terminal` (the admitted turn-0) so the user gets their run rather than the
+    // whole-journal notice, and the Timeline keeps the salt it needs.
+    const out = scopeProjection(journal(), "ff".repeat(32), B1);
+    expect(out.scopeMissed).toBe(false);
+    expect(out.motes.map((m) => m.moteId)).toEqual([B1]);
+  });
+
+  it("BOTH anchors missing ⇒ scopeMissed, honestly", () => {
+    const out = scopeProjection(journal(), "ff".repeat(32), "ee".repeat(32));
+    expect(out.scopeMissed).toBe(true);
+    expect(out.motes).toHaveLength(3);
+  });
+
+  it("a resolvable PRIMARY ignores the fallback", () => {
+    const out = scopeProjection(journal(), A2, B1);
+    expect(out.motes.map((m) => m.moteId)).toEqual([A1, A2]);
+    expect(out.scopeMissed).toBe(false);
+  });
 });
 
 describe("useProjection", () => {

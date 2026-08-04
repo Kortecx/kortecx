@@ -214,12 +214,13 @@ const REACT_ANSWER: &str = "answer";
 const REACT_DEAD: &str = "dead_lettered";
 
 /// Wait for a ReAct CHAIN to settle (the `kx/recipes/react` path). A react chain
-/// has no statically-known terminal Mote — the run-salted turn-0 id the gateway
-/// returns never commits, and the settled Answer turn is unknown until the model
-/// emits it — so completion is observed via `ListReactTurns`: done when a turn
-/// settles to `answer` (resolve its committed content) or `dead_lettered` (terminal
-/// failure). Mirrors the SDK `poll_react_result` (campaign finding F13). The
-/// `agent run` verb collects the tool ACTIONS with a final `ListReactTurns`.
+/// has no statically-known terminal Mote — the gateway's returned anchor is the
+/// admitted turn-0 (it commits, but committing turn 0 is not the chain done), and
+/// the settled Answer turn is unknown until the model emits it — so completion is
+/// observed via `ListReactTurns`: done when a turn settles to `answer` (resolve
+/// its committed content) or `dead_lettered` (terminal failure). Mirrors the SDK
+/// `poll_react_result` (campaign finding F13). The `agent run` verb collects the
+/// tool ACTIONS with a final `ListReactTurns`.
 pub async fn await_react_result(
     client: &mut KxGatewayClient<Channel>,
     resolved: &Resolved,

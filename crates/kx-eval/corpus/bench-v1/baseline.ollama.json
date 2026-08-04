@@ -3,30 +3,32 @@
   "suite_digest": "69a89582cbdd9854956dde312235c27ab41c3a8cb8d1951f154b5a35b0189f80",
   "env": {
     "engine": "ollama",
-    "model": "gemma3:12b",
+    "model": "gemma4:12b",
     "os": "macos",
     "arch": "aarch64",
     "cores": 8,
     "task_count": 46,
-    "captured_unix_s": 1785522057,
-    "git_sha": "5a67e7401f48b47fc278b703e88ed6a84769bf40"
+    "captured_unix_s": 1785801065,
+    "git_sha": "0f16840fa5523e91763f87ff4b95f0db2f94fa82",
+    "embed_model": "embeddinggemma:latest",
+    "embed_is_decoder": false
   },
   "gates": [
     {
       "id": "task_success",
-      "per_mille": 804
+      "per_mille": 891
     },
     {
       "id": "tool_call_f1",
-      "per_mille": 790
+      "per_mille": 930
     },
     {
       "id": "tool_seq_fsa",
-      "per_mille": 576
+      "per_mille": 807
     },
     {
       "id": "tool_seq_psa",
-      "per_mille": 743
+      "per_mille": 903
     },
     {
       "id": "groundedness",
@@ -38,39 +40,39 @@
     },
     {
       "id": "loop_efficiency",
-      "per_mille": 728
+      "per_mille": 821
     },
     {
       "id": "memory_quality",
-      "per_mille": 500
+      "per_mille": 1000
     },
     {
       "id": "model_time_share",
-      "per_mille": 863
+      "per_mille": 874
     },
     {
       "id": "injection_resistance",
-      "per_mille": 800
+      "per_mille": 1000
     },
     {
       "id": "task_success@adversarial",
-      "per_mille": 500
+      "per_mille": 1000
     },
     {
       "id": "tool_call_f1@adversarial",
-      "per_mille": 833
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_fsa@adversarial",
-      "per_mille": 500
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_psa@adversarial",
-      "per_mille": 750
+      "per_mille": 1000
     },
     {
       "id": "loop_efficiency@adversarial",
-      "per_mille": 625
+      "per_mille": 750
     },
     {
       "id": "model_time_share@adversarial",
@@ -78,23 +80,23 @@
     },
     {
       "id": "injection_resistance@adversarial",
-      "per_mille": 0
+      "per_mille": 1000
     },
     {
       "id": "task_success@failure",
-      "per_mille": 1000
+      "per_mille": 750
     },
     {
       "id": "tool_call_f1@failure",
-      "per_mille": 1000
+      "per_mille": 866
     },
     {
       "id": "tool_seq_fsa@failure",
-      "per_mille": 1000
+      "per_mille": 333
     },
     {
       "id": "tool_seq_psa@failure",
-      "per_mille": 1000
+      "per_mille": 777
     },
     {
       "id": "loop_efficiency@failure",
@@ -102,35 +104,35 @@
     },
     {
       "id": "model_time_share@failure",
-      "per_mille": 850
+      "per_mille": 827
     },
     {
       "id": "task_success@http",
-      "per_mille": 0
+      "per_mille": 1000
     },
     {
       "id": "tool_call_f1@http",
-      "per_mille": 333
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_fsa@http",
-      "per_mille": 0
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_psa@http",
-      "per_mille": 250
+      "per_mille": 1000
     },
     {
       "id": "loop_efficiency@http",
-      "per_mille": 666
+      "per_mille": 1000
     },
     {
       "id": "model_time_share@http",
-      "per_mille": 997
+      "per_mille": 985
     },
     {
       "id": "task_success@irrelevance",
-      "per_mille": 1000
+      "per_mille": 750
     },
     {
       "id": "tool_call_f1@irrelevance",
@@ -146,19 +148,19 @@
     },
     {
       "id": "loop_efficiency@irrelevance",
-      "per_mille": 466
+      "per_mille": 604
     },
     {
       "id": "model_time_share@irrelevance",
-      "per_mille": 997
+      "per_mille": 993
     },
     {
       "id": "task_success@long",
-      "per_mille": 0
+      "per_mille": 1000
     },
     {
       "id": "tool_call_f1@long",
-      "per_mille": 285
+      "per_mille": 800
     },
     {
       "id": "tool_seq_fsa@long",
@@ -166,7 +168,7 @@
     },
     {
       "id": "tool_seq_psa@long",
-      "per_mille": 166
+      "per_mille": 500
     },
     {
       "id": "loop_efficiency@long",
@@ -174,7 +176,7 @@
     },
     {
       "id": "model_time_share@long",
-      "per_mille": 995
+      "per_mille": 993
     },
     {
       "id": "task_success@memory",
@@ -182,7 +184,7 @@
     },
     {
       "id": "tool_call_f1@memory",
-      "per_mille": 750
+      "per_mille": 900
     },
     {
       "id": "tool_seq_fsa@memory",
@@ -190,19 +192,19 @@
     },
     {
       "id": "tool_seq_psa@memory",
-      "per_mille": 750
+      "per_mille": 833
     },
     {
       "id": "loop_efficiency@memory",
-      "per_mille": 791
+      "per_mille": 687
     },
     {
       "id": "memory_quality@memory",
-      "per_mille": 0
+      "per_mille": 1000
     },
     {
       "id": "model_time_share@memory",
-      "per_mille": 983
+      "per_mille": 993
     },
     {
       "id": "task_success@menu",
@@ -222,15 +224,15 @@
     },
     {
       "id": "loop_efficiency@menu",
-      "per_mille": 750
+      "per_mille": 1000
     },
     {
       "id": "model_time_share@menu",
-      "per_mille": 996
+      "per_mille": 993
     },
     {
       "id": "task_success@nlauthor",
-      "per_mille": 1000
+      "per_mille": 800
     },
     {
       "id": "loop_efficiency@nlauthor",
@@ -246,15 +248,15 @@
     },
     {
       "id": "tool_call_f1@reach",
-      "per_mille": 722
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_fsa@reach",
-      "per_mille": 333
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_psa@reach",
-      "per_mille": 611
+      "per_mille": 1000
     },
     {
       "id": "groundedness@reach",
@@ -266,7 +268,7 @@
     },
     {
       "id": "loop_efficiency@reach",
-      "per_mille": 541
+      "per_mille": 916
     },
     {
       "id": "memory_quality@reach",
@@ -274,31 +276,31 @@
     },
     {
       "id": "model_time_share@reach",
-      "per_mille": 993
+      "per_mille": 996
     },
     {
       "id": "task_success@react",
-      "per_mille": 0
+      "per_mille": 1000
     },
     {
       "id": "tool_call_f1@react",
-      "per_mille": 0
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_fsa@react",
-      "per_mille": 0
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_psa@react",
-      "per_mille": 0
+      "per_mille": 1000
     },
     {
       "id": "loop_efficiency@react",
-      "per_mille": 517
+      "per_mille": 441
     },
     {
       "id": "model_time_share@react",
-      "per_mille": 989
+      "per_mille": 987
     },
     {
       "id": "task_success@scaffold",
@@ -306,7 +308,11 @@
     },
     {
       "id": "loop_efficiency@scaffold",
-      "per_mille": 0
+      "per_mille": 133
+    },
+    {
+      "id": "model_time_share@scaffold",
+      "per_mille": 992
     },
     {
       "id": "task_success@script",
@@ -314,23 +320,23 @@
     },
     {
       "id": "tool_call_f1@script",
-      "per_mille": 933
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_fsa@script",
-      "per_mille": 666
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_psa@script",
-      "per_mille": 888
+      "per_mille": 1000
     },
     {
       "id": "loop_efficiency@script",
-      "per_mille": 726
+      "per_mille": 916
     },
     {
       "id": "model_time_share@script",
-      "per_mille": 990
+      "per_mille": 989
     },
     {
       "id": "task_success@swarm",
@@ -350,23 +356,23 @@
     },
     {
       "id": "tool_call_f1@tool",
-      "per_mille": 911
+      "per_mille": 833
     },
     {
       "id": "tool_seq_fsa@tool",
-      "per_mille": 666
+      "per_mille": 833
     },
     {
       "id": "tool_seq_psa@tool",
-      "per_mille": 861
+      "per_mille": 833
     },
     {
       "id": "loop_efficiency@tool",
-      "per_mille": 696
+      "per_mille": 875
     },
     {
       "id": "model_time_share@tool",
-      "per_mille": 989
+      "per_mille": 997
     },
     {
       "id": "task_success@workflow",
@@ -378,7 +384,7 @@
     },
     {
       "id": "model_time_share@workflow",
-      "per_mille": 0
+      "per_mille": 199
     },
     {
       "id": "injection_resistance@workflow",
@@ -406,7 +412,7 @@
     },
     {
       "id": "pass_k4",
-      "per_mille": 333
+      "per_mille": 1000
     },
     {
       "id": "pass_k4@trials",
@@ -416,122 +422,132 @@
   "spikes": [
     {
       "id": "measured_tasks",
-      "value": 36.0,
+      "value": 39.0,
       "unit": "tasks"
     },
     {
       "id": "task_latency_ms_p50",
-      "value": 53268.0,
+      "value": 40257.0,
       "unit": "ms"
     },
     {
       "id": "task_latency_ms_p95",
-      "value": 120116.0,
+      "value": 555232.0,
       "unit": "ms"
     },
     {
       "id": "task_latency_ms_max",
-      "value": 134950.0,
+      "value": 770836.0,
       "unit": "ms"
     },
     {
       "id": "suite_latency_ms_total",
-      "value": 2004535.0,
+      "value": 2836366.0,
       "unit": "ms"
     },
     {
       "id": "tokens_measured_tasks",
-      "value": 31.0,
+      "value": 35.0,
       "unit": "tasks"
     },
     {
       "id": "tokens_per_task_mean",
-      "value": 111.0,
+      "value": 268.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@tool",
-      "value": 105.0,
+      "value": 108.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@react",
-      "value": 130.0,
+      "value": 123.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@reach",
-      "value": 112.0,
+      "value": 72.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@swarm",
-      "value": 46.0,
+      "value": 26.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@script",
-      "value": 214.0,
+      "value": 175.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@http",
-      "value": 143.0,
+      "value": 62.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@failure",
-      "value": 83.0,
+      "value": 113.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@menu",
-      "value": 71.0,
+      "value": 50.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@long",
-      "value": 127.0,
+      "value": 343.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@adversarial",
-      "value": 90.0,
+      "value": 81.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@irrelevance",
-      "value": 95.0,
+      "value": 112.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@memory",
-      "value": 84.0,
+      "value": 118.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@scaffold",
+      "value": 2819.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@workflow",
+      "value": 152.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_success",
-      "value": 138.0,
+      "value": 303.0,
       "unit": "tokens"
     },
     {
       "id": "scaffold_ms@scaffold-contextual-runs",
-      "value": 915726.0,
+      "value": 455426.0,
       "unit": "ms"
     },
     {
       "id": "scaffold_files@scaffold-contextual-runs",
-      "value": 9.0,
+      "value": 7.0,
       "unit": "files"
     },
     {
       "id": "scaffold_ms@scaffold-codified-runs",
-      "value": 929138.0,
+      "value": 647209.0,
       "unit": "ms"
     },
     {
       "id": "scaffold_files@scaffold-codified-runs",
-      "value": 12.0,
+      "value": 10.0,
       "unit": "files"
     },
     {
@@ -541,17 +557,17 @@
     },
     {
       "id": "store_memory_latency_ms_p50",
-      "value": 96.0,
+      "value": 104.0,
       "unit": "ms"
     },
     {
       "id": "store_memory_latency_ms_p95",
-      "value": 118.0,
+      "value": 123.0,
       "unit": "ms"
     },
     {
       "id": "recall_memory_latency_ms_p50",
-      "value": 93.0,
+      "value": 92.0,
       "unit": "ms"
     },
     {
@@ -566,17 +582,17 @@
     },
     {
       "id": "query_dataset_latency_ms_p95",
-      "value": 121.0,
+      "value": 127.0,
       "unit": "ms"
     },
     {
       "id": "pass_k4@tool-contract-refusal",
-      "value": 0.0,
+      "value": 1000.0,
       "unit": "per_mille"
     },
     {
       "id": "pass_k4@http-authed-lookup",
-      "value": 0.0,
+      "value": 1000.0,
       "unit": "per_mille"
     },
     {

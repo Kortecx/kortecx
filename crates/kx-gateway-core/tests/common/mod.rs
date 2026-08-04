@@ -54,6 +54,19 @@ impl MockSubmitter {
     }
 }
 
+/// The id the mock reports for a `react_seed` submit — a DIFFERENT id than the
+/// input Mote's, modelling the coordinator's seed-swap (the seed is validated
+/// then discarded; only the swapped-in turn-0 Mote is admitted, under its own
+/// id). An echoing mock cannot distinguish "the handler returned the admitted
+/// id" from "the handler returned the seed id" — the two states a react-anchor
+/// test exists to tell apart.
+#[must_use]
+pub fn react_swapped_id(seed: &[u8; 32]) -> [u8; 32] {
+    let mut id = *seed;
+    id[0] ^= 0xFF;
+    id
+}
+
 #[tonic::async_trait]
 impl RunSubmitter for MockSubmitter {
     async fn register_run(&self, recipe_fingerprint: [u8; 32]) -> Result<[u8; 16], SubmitterError> {
@@ -80,8 +93,15 @@ impl RunSubmitter for MockSubmitter {
         });
         Ok(SubmitMoteOutcome {
             // The re-derived identity (the wire advisory id was discarded at
-            // TryFrom) — the identity property at the submit boundary.
-            mote_id: *mote.id.as_bytes(),
+            // TryFrom) — the identity property at the submit boundary. Under
+            // `react_seed` the coordinator ADMITS A DIFFERENT MOTE than it was
+            // handed (the seed-swap), so the mock must too, or a test of the
+            // returned anchor passes vacuously.
+            mote_id: if react_seed {
+                react_swapped_id(mote.id.as_bytes())
+            } else {
+                *mote.id.as_bytes()
+            },
             instance_id: INSTANCE_ID,
             status: SubmitStatus::Accepted,
         })

@@ -548,6 +548,61 @@ async fn invoke_forwards_react_seed_to_the_submitter() {
     );
 }
 
+#[tokio::test]
+async fn react_invoke_returns_the_admitted_swap_id_not_the_seed() {
+    // The coordinator's seed-swap validates the react seed then discards it —
+    // only the swapped-in turn-0 Mote is admitted, under its own id. The anchor
+    // a client can resolve against `GetProjection` is therefore the ADMITTED id
+    // the submit outcome reports, never the seed's. The mock models the swap
+    // (`react_swapped_id`); an echoing mock made this property untestable.
+    struct ReactBinder;
+    #[tonic::async_trait]
+    impl RecipeBinder for ReactBinder {
+        async fn bind(
+            &self,
+            _party: &str,
+            _handle: &str,
+            _args: &[u8],
+            _context_bundles: &[String],
+            _context_refs: &[String],
+        ) -> Result<BoundRecipe, BinderError> {
+            Ok(BoundRecipe {
+                recipe_fingerprint: RECIPE_FP,
+                motes: vec![(sample_mote(), sample_warrant())],
+                terminal_mote_id: sample_mote().id,
+                react_seed: true,
+            })
+        }
+    }
+    let mock = MockSubmitter::default();
+    let svc = service_from(build_run(), Arc::new(mock.clone()))
+        .with_recipe_binder(Arc::new(ReactBinder))
+        .with_react_supported(true);
+    let mut client = spawn_with_party(svc, "alice").await;
+    let resp = client
+        .invoke(proto::InvokeRequest {
+            handle: "kx/recipes/react".into(),
+            args: b"{}".to_vec(),
+            context_bundles: vec![],
+            context_refs: vec![],
+        })
+        .await
+        .expect("react recipe admitted")
+        .into_inner();
+
+    let seed = *sample_mote().id.as_bytes();
+    assert_eq!(
+        resp.react_chain_salt,
+        seed.to_vec(),
+        "the salt stays the seed id — it is the ListReactTurns chain key"
+    );
+    assert_eq!(
+        resp.terminal_mote_id,
+        common::react_swapped_id(&seed).to_vec(),
+        "the returned anchor is the coordinator-admitted swap id, not the discarded seed"
+    );
+}
+
 // --- Identity — the client never computes a MoteId -----------------------------
 
 #[test]

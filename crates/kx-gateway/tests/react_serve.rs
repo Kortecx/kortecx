@@ -160,3 +160,106 @@ async fn invoke_react_recipe_drives_a_live_chain_to_answer() {
 
     running.shutdown().await.unwrap();
 }
+
+/// The RUN ANCHOR a react `Invoke` returns must name a Mote the projection
+/// actually CONTAINS — otherwise no client can scope the run view, and the
+/// console's only honest option is its "showing every step in this journal"
+/// notice over the whole server journal.
+///
+/// The failure this pins: the gateway returned the react SEED Mote's id as
+/// `terminal_mote_id`, and the coordinator's seed-swap validates the seed then
+/// discards it — the anchor named a Mote that is never admitted anywhere.
+/// `react_chain_salt` stays the chain KEY (`ListReactTurns.step_salt`); for a
+/// react Invoke the two fields must therefore DIFFER, and that difference is
+/// asserted first — two indistinguishable states are not a witness.
+///
+/// Deliberately NO mote-count and NO full-chain-component assertion: react turn
+/// Motes are edge-free by design (trajectory travels out-of-band), so the chain
+/// folds as disjoint stars and any count would pin an implementation detail.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference; needs a GGUF (just fetch-agent-model); opt in with --ignored"]
+async fn react_invoke_anchor_is_present_in_the_projection() {
+    let Some(gguf) = serve_model() else {
+        eprintln!(
+            "skipping: no serve model — run `just fetch-agent-model` (or set \
+             KX_SERVE_MODEL_GGUF) first"
+        );
+        return;
+    };
+    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // Precondition asserted, not skipped: without the bundled echo tool the react
+    // recipe is not provisioned and this test would pass over nothing.
+    let recipes = c
+        .list_recipes(proto::ListRecipesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(
+        recipes
+            .recipes
+            .iter()
+            .any(|r| r.handle == REACT_RECIPE_HANDLE),
+        "kx/recipes/react not provisioned — cargo build -p kx-mcp (or KX_MCP_ECHO_PATH)"
+    );
+
+    let resp = c
+        .invoke(proto::InvokeRequest {
+            handle: REACT_RECIPE_HANDLE.to_string(),
+            args: br#"{"instruction":"What is 3+4? Answer briefly in prose.","max_turns":4,"max_tool_calls":2}"#
+                .to_vec(),
+            context_bundles: vec![],
+            context_refs: vec![],
+        })
+        .await
+        .expect("invoke kx/recipes/react")
+        .into_inner();
+    assert!(
+        !resp.react_chain_salt.is_empty(),
+        "a react Invoke returns its chain salt"
+    );
+    assert!(
+        !resp.terminal_mote_id.is_empty(),
+        "a react Invoke returns a run anchor"
+    );
+
+    // The anchor resolves in the fold. Turn 0 is registered at submit (not at
+    // settle), so this converges quickly; 30s is generous, not load-bearing.
+    let mut present = false;
+    for _ in 0..300 {
+        let proj = c
+            .get_projection(proto::GetProjectionRequest {
+                instance_id: resp.instance_id.clone(),
+                at_seq: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        if proj
+            .motes
+            .iter()
+            .any(|m| m.mote_id == resp.terminal_mote_id)
+        {
+            present = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        present,
+        "InvokeResponse.terminal_mote_id names no Mote in GetProjection — \
+         the run view cannot scope this run (it will fall back to the whole journal)"
+    );
+    assert_ne!(
+        resp.terminal_mote_id, resp.react_chain_salt,
+        "the anchor is an ADMITTED Mote; the salt names the discarded seed"
+    );
+
+    running.shutdown().await.unwrap();
+}
