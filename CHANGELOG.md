@@ -6,6 +6,25 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Changed
 
+- **A served model now tells the runtime how it spells a tool call.** The argument grammar was
+  armed on one syntax — the JSON envelope the runtime's own prompt teaches — so a model that
+  proposes tool calls in a different one had its arguments checked by nothing: the call was
+  recovered by the tolerant parser, refused by the argument schema, retried, and the run failed
+  having looked like it worked. A GGUF's chat template renders the delimiters, so the runtime now
+  reads them back at load and constrains what the model writes. On the same model, `task_success`
+  on llama.cpp moves from 826 to 934 — `http`, `long`, `reach`, `script` and `failure` all reach
+  1000 — while every Ollama family is byte-identical in the same capture. One number moved the
+  other way and is published rather than withheld: `memory_quality` on llama.cpp reads 0, and the
+  README says why.
+- **Adding a model is a command rather than a code change.** `just model-conformance <path.gguf>`
+  derives the model's dialect, checks the sampler engages, checks ordinary prose is not masked,
+  and checks the arguments it emits are legal for the tools it was granted. It fails rather than
+  skips when no model is available, because a skip reads exactly like a pass.
+- **The published benchmark block is generated from the committed baselines.** The chart, the
+  denominators and the capture provenance are rendered rather than hand-maintained, and CI now
+  checks the surrounding prose against the baselines too — not only the tables. The published
+  comparison covers the agentic families; the authoring and scripting families are disclosed as
+  an aggregate rather than dropped, and CI checks that the two reconcile.
 - **Benchmark baselines are now captured on the same model family for both engines.** The two
   committed baselines were captured on different models, so no engine comparison drawn from them
   was valid. Both are now Gemma-4-family captures — `gemma4:12b` on Ollama and the same-family

@@ -174,10 +174,23 @@ impl ToolEnvelopeSpec {
         })
     }
 
-    /// Render this spec to a GBNF grammar (llama.cpp dialect).
+    /// Render this spec to a GBNF grammar (llama.cpp dialect) constraining ONLY the
+    /// runtime's own canonical envelope. This is the shipped shape from before dialects
+    /// existed; the goldens pin it.
     #[must_use]
     pub fn to_gbnf(&self) -> String {
         crate::gbnf::render(self)
+    }
+
+    /// Render this spec to a GBNF grammar whose root alternates over `dialects`, so the
+    /// sampler can constrain the ARGUMENTS of whichever call syntax the model opens with.
+    ///
+    /// Must be armed with [`crate::tool_call_trigger_patterns`] over the SAME slice: the
+    /// triggers decide when llama.cpp starts feeding this grammar, and it feeds it from
+    /// the capture group onward. Mismatched sets do not degrade — they abort the decode.
+    #[must_use]
+    pub fn to_gbnf_for(&self, dialects: &[kx_toolcall::ToolDialect]) -> String {
+        crate::gbnf::render_for(self, dialects)
     }
 
     /// Render this spec to a JSON Schema (Ollama `format` dialect).

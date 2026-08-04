@@ -72,6 +72,8 @@ pub use content::ContentFetcher;
 pub use dispatcher::{DispatchOutcome, Dispatcher, DispatcherConfig};
 #[cfg(feature = "llamacpp")]
 pub use llama::LlamaInferenceBackend;
+#[cfg(feature = "llamacpp")]
+pub use types::ModelDialects;
 pub use types::{
     inference_params_from_mote, EmbeddingOutput, EmbeddingPooling, Grammar, InferenceError,
     InferenceInput, InferenceOutput, InferenceParams, MEDIA_MARKER,

@@ -60,12 +60,11 @@ async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live serve; needs a model (KX_SERVE_MODEL_GGUF or the Qwen3 stand-in)"]
 async fn model_control_v2_switch_and_pull_deny_by_default() {
-    let Some(gguf) = serve_model() else {
-        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF");
-        return;
-    };
+    // Fail-closed engine resolution (Ollama opt-in first, else a GGUF).
+    // This used to runtime-SKIP without a GGUF, which reported PASS while
+    // executing nothing — and on the Ollama arm it skipped every time.
+    let _engine = common::resolve_engine(serve_model);
     // The serve resolves its model set from the env at startup.
-    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
     // Deny-by-default: ensure downloads are OFF for the refusal invariant.
     std::env::remove_var("KX_SERVE_ALLOW_MODEL_PULL");
 

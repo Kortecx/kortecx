@@ -2315,14 +2315,29 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
             );
         } else {
             eprintln!(
-                "eval-bench: {} regression(s) vs {} [{provenance}]",
+                "eval-bench: {} regression(s) vs {} — {} gating, {} advisory [{provenance}]",
                 cmp.regressions.len(),
-                bpath.display()
+                bpath.display(),
+                cmp.gated().len(),
+                cmp.advisory().len(),
             );
+            // Print `n` beside every number. A per-mille without its denominator cannot be
+            // read — 0 of 1 and 0 of 40 are the same figure and completely different
+            // findings — and a one-task family swinging the full 1000 is a coin flip, not
+            // a trend. Advisory rows are printed too: a family rotting to zero must stay
+            // visible even when it is too thin to enforce.
             for r in &cmp.regressions {
                 eprintln!(
-                    "  - {}: {} < baseline {} ({provenance})",
-                    r.metric_id, r.current_per_mille, r.baseline_per_mille
+                    "  - {} [{}]: {} < baseline {} (n={}) ({provenance})",
+                    r.metric_id,
+                    if r.gated {
+                        "GATING"
+                    } else {
+                        "advisory, n too small"
+                    },
+                    r.current_per_mille,
+                    r.baseline_per_mille,
+                    r.n,
                 );
             }
             // Gate a capable model against the ratchet — but ONLY on a complete run. On
@@ -2330,7 +2345,12 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
             // against fixtures that never landed), so a "regression" would be blaming the
             // model for the serve's build. Loud, not fatal.
             if capable && complete {
-                panic!("eval-bench regressed below the committed baseline");
+                panic!(
+                    "eval-bench regressed below the committed baseline on {} GATED \
+                     metric(s) (n >= {})",
+                    cmp.gated().len(),
+                    kx_eval::MIN_GATED_N,
+                );
             }
             if capable {
                 eprintln!(

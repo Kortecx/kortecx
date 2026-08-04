@@ -34,6 +34,9 @@ kx-model-store       = { workspace = true, optional = true }
 # in-process llama.cpp sampler. FFI-free + optional behind `llamacpp` (only the
 # concrete backend's sampler uses it; the bring-your-own-backend build drops it).
 kx-grammar           = { workspace = true, optional = true }
+# The tool-call dialect table + the derivation that reads a model's OWN chat template.
+# Optional and pulled in by `llamacpp`, because only the in-process leg arms a lazy GBNF.
+kx-toolcall          = { workspace = true, optional = true }
 serde                = { workspace = true }
 thiserror            = { workspace = true }
 tracing              = { workspace = true }
@@ -51,7 +54,7 @@ smallvec             = { workspace = true }
 # --workspace` keep the FFI ON because kx-model-harness (the only consumer of the
 # concrete backend) opts back in with `features = ["llamacpp"]`.
 default  = ["llamacpp"]
-llamacpp = ["dep:kx-llamacpp", "dep:kx-model-store", "dep:kx-grammar"]
+llamacpp = ["dep:kx-llamacpp", "dep:kx-model-store", "dep:kx-grammar", "dep:kx-toolcall"]
 
 [dev-dependencies]
 kx-journal         = { workspace = true }

@@ -137,19 +137,31 @@ impl<'ctx, 'm, 'b, 's, 'v> Iterator for Generator<'ctx, 'm, 'b, 's, 'v> {
         }
 
         // 1. Sample the next token from the last decoded position's logits.
+        //
+        // ⚠ DO NOT call `sampler.accept(token)` here. `llama_sampler_sample` ALREADY ends
+        // with `llama_sampler_accept(smpl, token)` (llama-sampler.cpp), so an accept here
+        // is a SECOND accept of the same token.
+        //
+        // That was harmless for years and is not harmless now. A stateless chain ignores
+        // accept, and repetition penalties merely double-count — but a LAZY GRAMMAR is
+        // stateful in a way that cannot survive it. The first accept of the tool-call
+        // opener fires the trigger and REPLAYS that opener into the grammar; the second
+        // accept feeds the same text to a grammar that has already consumed it, every
+        // parse stack dies, and `llama_grammar_accept_token` throws — through an
+        // `extern "C"` boundary, which Rust cannot catch. The process ABORTS mid-decode.
+        //
+        // Measured: with the double accept, the engagement counters climbed by 2 per
+        // token and a Gemma-4 tool call aborted the owner thread the instant its trigger
+        // fired. This is why the counter has an `awaiting` field at all.
         let token = self.sampler.sample(self.ctx, -1);
 
-        // 2. Inform the sampler (no-op for stateless chains; matters for
-        //    repetition penalties / mirostat).
-        self.sampler.accept(token);
-
-        // 3. Stop after yielding EOG — the model has signaled it's done.
+        // 2. Stop after yielding EOG — the model has signaled it's done.
         if token.is_eog(self.vocab) {
             self.done = true;
             return Some(Ok(token));
         }
 
-        // 4. Decode the new token at the current position so the NEXT call
+        // 3. Decode the new token at the current position so the NEXT call
         //    to next() can sample from updated logits.
         let mut step = Batch::with_capacity(1, 1);
         step.add(token, self.pos, &[0], true);

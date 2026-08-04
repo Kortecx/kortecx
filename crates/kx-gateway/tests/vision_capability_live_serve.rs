@@ -60,7 +60,14 @@ async fn await_answer(
         let proj = c
             .get_projection(proto::GetProjectionRequest {
                 instance_id: instance_id.clone(),
-                at_seq: Some(0),
+                // ⚠ `None` = fold to the CURRENT head, which is what a live poll always
+                // wants. This used to pin `Some(0)`, and that is not merely a slow poll —
+                // journal seqs are 1-based, so a frontier of 0 folds an EMPTY range, the
+                // run is unknown to the projection, ownership correctly refuses, and the
+                // `.unwrap()` below panics `permission_denied` on the FIRST iteration.
+                // This oracle had therefore never passed on any engine. Matches the shared
+                // helper in `tests/common/mod.rs`.
+                at_seq: None,
             })
             .await
             .unwrap()

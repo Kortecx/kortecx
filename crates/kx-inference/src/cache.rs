@@ -48,7 +48,7 @@ use smallvec::SmallVec;
 
 use crate::llama::BACKEND_NAME;
 use crate::types::{
-    EmbeddingOutput, EmbeddingPooling, InferenceError, InferenceOutput, MEDIA_MARKER,
+    EmbeddingOutput, EmbeddingPooling, InferenceError, InferenceOutput, ModelDialects, MEDIA_MARKER,
 };
 
 /// Default number of distinct models kept loaded at once. Small because models
@@ -144,6 +144,21 @@ struct RenderJob {
     reply: Sender<Result<String, InferenceError>>,
 }
 
+/// Ask which tool-call dialects a model will be armed with. Shares the owner thread +
+/// LRU like [`RenderJob`]; the model must be resident to read its chat template.
+struct DialectJob {
+    identity: ContentRef,
+    path: PathBuf,
+    reply: Sender<Result<ModelDialects, InferenceError>>,
+}
+
+/// Read the owner thread's cumulative grammar-engagement counters. The owner thread IS
+/// the decoding thread, so its thread-local counters are exactly attributed; a caller
+/// takes a DELTA around the dispatch it cares about.
+struct EngagementJob {
+    reply: Sender<kx_llamacpp::GrammarEngagement>,
+}
+
 /// Warm a model's weights into the LRU WITHOUT running inference (POC-3 explicit
 /// load). Reuses the same cold-load + capacity-evict path as a dispatch, so an
 /// over-capacity warm honestly LRU-evicts the oldest model (the sequential swap).
@@ -180,6 +195,10 @@ enum OwnerJob {
     Embed(Box<EmbedJob>),
     /// A chat-template render request (model-agnostic prompt formatting).
     RenderChat(Box<RenderJob>),
+    /// "Which tool-call dialects will you arm for this model?"
+    Dialects(Box<DialectJob>),
+    /// "How many times has your lazy grammar armed, engaged and awaited?"
+    Engagement(EngagementJob),
     /// Warm a registered model into the LRU without inferring (POC-3 load).
     Warm(WarmJob),
     /// Evict a specific model from the LRU (POC-3 offload).
@@ -357,6 +376,45 @@ impl ModelCache {
             })?
     }
 
+    /// Ask the owner thread which dialects `identity` will be armed with.
+    pub(crate) fn dialects(
+        &self,
+        identity: ContentRef,
+        path: PathBuf,
+    ) -> Result<ModelDialects, InferenceError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let job = DialectJob {
+            identity,
+            path,
+            reply: reply_tx,
+        };
+        self.tx
+            .send(OwnerJob::Dialects(Box::new(job)))
+            .map_err(|_| InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: "model-cache owner thread is gone (send failed)".to_string(),
+            })?;
+        reply_rx
+            .recv()
+            .map_err(|_| InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: "model-cache owner thread died mid-job (recv failed)".to_string(),
+            })?
+    }
+
+    /// The owner thread's cumulative engagement counters.
+    pub(crate) fn engagement(&self) -> kx_llamacpp::GrammarEngagement {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        if self
+            .tx
+            .send(OwnerJob::Engagement(EngagementJob { reply: reply_tx }))
+            .is_err()
+        {
+            return kx_llamacpp::GrammarEngagement::default();
+        }
+        reply_rx.recv().unwrap_or_default()
+    }
+
     /// Warm `identity` (a registered model's weights) into the LRU on the owner
     /// thread WITHOUT inferring (POC-3 load). Blocks until the load completes.
     /// Over-capacity ⇒ honest LRU-evict-oldest (sequential swap).
@@ -441,6 +499,13 @@ fn owner_loop(
                     OwnerJob::RenderChat(job) => {
                         let _ = job.reply.send(Err(err.clone()));
                     }
+                    OwnerJob::Dialects(job) => {
+                        let _ = job.reply.send(Err(err.clone()));
+                    }
+                    OwnerJob::Engagement(job) => {
+                        // No backend ⇒ nothing ever armed. Zeros are the honest reading.
+                        let _ = job.reply.send(kx_llamacpp::GrammarEngagement::default());
+                    }
                     OwnerJob::Warm(job) => {
                         let _ = job.reply.send(Err(err.clone()));
                     }
@@ -480,6 +545,16 @@ fn owner_loop(
             OwnerJob::RenderChat(job) => {
                 let result = run_render_job(&backend, &mut lru, capacity, loads, &job);
                 let _ = job.reply.send(result);
+            }
+            OwnerJob::Dialects(job) => {
+                let result =
+                    get_or_load(&backend, &mut lru, capacity, loads, job.identity, &job.path)
+                        .map_err(map_llama_err)
+                        .map(|entry| model_dialects(entry.model()));
+                let _ = job.reply.send(result);
+            }
+            OwnerJob::Engagement(job) => {
+                let _ = job.reply.send(kx_llamacpp::grammar_engagement());
             }
             OwnerJob::Warm(job) => {
                 // Warm = load-without-infer: reuse get_or_load (cold-load +
@@ -645,14 +720,51 @@ fn get_or_load<'a, 'b>(
 /// The start symbol of the GBNF `kx_grammar` renders.
 const GRAMMAR_ROOT: &str = "root";
 
-/// Lazy-grammar trigger: the canonical JSON tool-call envelope opener. Prose
-/// answers flow free until the model emits `{"tool_call"`, at which point the
-/// grammar arms and constrains the rest of the envelope to a grant-pinned shape.
-/// Native-marker tool-call formats (Gemma `<|tool_call>`, Llama `<|python_tag|>`,
-/// Qwen `<tool_call>`) never match this opener, so they pass through UNCONSTRAINED
-/// to the fail-closed `kx_toolcall` parser — an honest capability gap, not a
-/// silent one (the accept-side gate is identical for both paths).
-const TOOL_CALL_TRIGGERS: [&str; 1] = [r#"[\s\S]*?(\{[ \t\n]*"tool_call")"#];
+/// The tool-call dialects to arm for a model, most specific first.
+///
+/// Historically this was a single hard-coded trigger for the canonical JSON envelope, and
+/// a model emitting its OWN syntax (Gemma-4 opens `<|tool_call>call:`, Qwen `<tool_call>`)
+/// never matched it: the sampler logged *awaiting trigger* and engaged zero times, so tool
+/// arguments were generated completely unconstrained while every "did the tool fire?"
+/// check stayed green, because the tolerant parser recovers the call either way.
+///
+/// Now the model is ASKED. Its own chat template renders the delimiters, so
+/// [`kx_toolcall::derive_dialect_from_template`] reads them back and a model nobody
+/// hard-coded is armed correctly on first load. [`kx_toolcall::KNOWN_DIALECTS`] remains
+/// the fallback for templates that never mention tool calls.
+///
+/// The returned set is used for BOTH the triggers and the rendered GBNF, and that is not a
+/// convenience: llama.cpp replays a trigger's capture group into the grammar, and
+/// `llama_grammar_accept_token` throws — with nothing catching it before the C boundary —
+/// when the grammar cannot accept it. Arming a dialect the grammar does not know aborts the
+/// process, so the two must never be computed from different sources.
+fn model_dialects(model: &Model<'_>) -> ModelDialects {
+    let derived = model
+        .chat_template(None)
+        .as_deref()
+        .and_then(kx_toolcall::derive_dialect_from_template);
+    let mut armed = vec![kx_toolcall::CANONICAL_ENVELOPE];
+    match &derived {
+        // The model told us. Arm exactly what it declared — narrower than the fallback,
+        // and correct for a model nobody has ever hard-coded.
+        Some(d) => armed.push(d.clone()),
+        // It did not. Arm every dialect we know of: a wrong guess here costs a trigger
+        // that never fires, which is the status quo, whereas arming nothing guarantees
+        // unconstrained arguments.
+        None => armed.extend(
+            kx_toolcall::KNOWN_DIALECTS
+                .iter()
+                .filter(|d| d.shape != kx_toolcall::DialectShape::CanonicalEnvelope)
+                .cloned(),
+        ),
+    }
+    ModelDialects { derived, armed }
+}
+
+/// Convenience for the sampler path.
+fn dialects_for(model: &Model<'_>) -> Vec<kx_toolcall::ToolDialect> {
+    model_dialects(model).armed
+}
 
 /// Build the sampler for `params`. The SELECTION stages are unchanged (greedy
 /// when `temperature_bps == 0`, else top-k/top-p/temp/dist) — byte-identical to
@@ -680,6 +792,7 @@ fn build_sampler<'b>(
     backend: &'b LlamaBackend,
     vocab: &Vocab<'_, '_>,
     params: &InferenceParams,
+    dialects: &[kx_toolcall::ToolDialect],
 ) -> Result<Sampler<'b>, InferenceError> {
     let mut chain = Sampler::chain(backend);
 
@@ -690,14 +803,15 @@ fn build_sampler<'b>(
                 message: format!("grammar spec carrier: {e}"),
             })?;
         chain = match spec {
-            GrammarSpec::ToolEnvelope(envelope) => chain
-                .add_grammar_lazy(
-                    vocab,
-                    &envelope.to_gbnf(),
-                    GRAMMAR_ROOT,
-                    &TOOL_CALL_TRIGGERS,
-                )
-                .map_err(map_llama_err)?,
+            GrammarSpec::ToolEnvelope(envelope) => {
+                // ONE source for both halves — see `dialects_for`.
+                let triggers = kx_grammar::tool_call_trigger_patterns(dialects);
+                let refs: Vec<&str> = triggers.iter().map(String::as_str).collect();
+                kx_llamacpp::note_grammar_armed();
+                chain
+                    .add_grammar_lazy(vocab, &envelope.to_gbnf_for(dialects), GRAMMAR_ROOT, &refs)
+                    .map_err(map_llama_err)?
+            }
             // Degrade to the fail-closed parser (see the fn doc — T-RERANK-GBNF-CRASH).
             GrammarSpec::Permutation(_) => chain,
         };
@@ -808,7 +922,7 @@ fn generate(
         .map_err(map_llama_err)?;
     check_timeout(start.elapsed(), timeout, job.wall_clock_ms)?;
 
-    let mut sampler = build_sampler(backend, &vocab, &job.params)?;
+    let mut sampler = build_sampler(backend, &vocab, &job.params, &dialects_for(model))?;
     let generator =
         Generator::new(&mut ctx, &mut sampler, &vocab, prompt_tokens).map_err(map_llama_err)?;
     run_generation(generator, &vocab, job, start, timeout)
@@ -896,7 +1010,7 @@ fn generate_multimodal(
     check_timeout(start.elapsed(), timeout, job.wall_clock_ms)?;
 
     let vocab = model.vocab();
-    let mut sampler = build_sampler(backend, &vocab, &job.params)?;
+    let mut sampler = build_sampler(backend, &vocab, &job.params, &dialects_for(model))?;
     let generator = Generator::from_prefilled(&mut ctx, &mut sampler, &vocab, n_past);
     run_generation(generator, &vocab, job, start, timeout)
 }

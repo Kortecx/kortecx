@@ -491,12 +491,19 @@ pub struct CommitInput<'a> {
 /// `CapabilityBroker` + `ContentStore` + `Journal` together via the
 /// per-`EffectPattern` paths defined in D38 + D39.
 ///
-/// **PR 9b-3 scope**: only the `IdempotentByConstruction` path is
-/// implemented (D39 §a — `broker.dispatch → R-11 verify →
-/// journal.append(Committed)`). `StageThenCommit` returns
-/// `CommitProtocolError::Internal { reason: "PR 9b-4 ..." }` and
-/// `ValidateThenCommit` returns
-/// `CommitProtocolError::Internal { reason: "PR 9b-5 ..." }`.
+/// **All three effect patterns are implemented**:
+/// - `IdempotentByConstruction` — `broker.dispatch → R-11 verify →
+///   journal.append(Committed)` (D39 §a).
+/// - `StageThenCommit` — `journal.append(EffectStaged) → broker.dispatch →
+///   R-11 verify → journal.append(Committed)` (D38 §2b); the staged entry is
+///   the durable recovery hint and shares the commit's idempotency key.
+/// - `ValidateThenCommit` — commit-step semantics identical to
+///   `IdempotentByConstruction`; the distinction is at SCHEDULING (a sibling
+///   critic Mote gates downstream consumers, D20), which the lifecycle layer owns.
+///
+/// `every_effect_pattern_dispatches_to_an_implemented_path` in
+/// `tests/integration_idempotent_commit.rs` holds this true: a new variant that
+/// falls through to a stub fails that test.
 ///
 /// **Generic over** `(S, J, B)` — concrete impls of `ContentStore` /
 /// `Journal` / `CapabilityBroker`. Held by `Arc<S>` / `Arc<J>` / `Arc<B>`
