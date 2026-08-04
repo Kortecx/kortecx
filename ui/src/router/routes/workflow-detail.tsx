@@ -103,6 +103,11 @@ function WorkflowDetailContent() {
     ...(atSeq != null ? { atSeq } : {}),
     ...(terminal ? { terminalMoteId: terminal } : {}),
     ...(chain ? { scopeMoteId: chain } : {}),
+    // A react run's `chain` is the SALT (the Timeline's key). From a server that
+    // anchored on the discarded seed, the salt scopes nothing — the terminal
+    // (the admitted turn-0) still does, so the view retries with it rather than
+    // dumping the whole journal under the unscoped notice.
+    ...(terminal && chain && terminal !== chain ? { scopeFallbackMoteId: terminal } : {}),
   });
   const data = projection.data;
   // Either no scope key was supplied, or one was and the fold does not contain it. Both

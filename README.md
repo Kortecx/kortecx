@@ -276,7 +276,7 @@ judge-scored claim coverage, which this is not.) Full definitions:
 [Evaluation](docs/site/docs/evaluation.md).
 
 **Environment.** Everything below was captured on `macos/aarch64`, 8 cores, over **46 tasks**,
-on two different Gemma-4-12B builds — Ollama `gemma3:12b` and a llama.cpp GGUF served as
+on two Gemma-4-family builds — Ollama `gemma4:12b` and a llama.cpp GGUF served as
 `kx-serve:gemma-4-12b-it-q4_k_m`. They are not the same build, and the columns are not
 interchangeable. The label travels in the committed baseline, and CI holds this text to it.
 
@@ -297,20 +297,20 @@ exact pass count.
 | Family | Tasks | What a task proves | Ollama | llama.cpp |
 | --- | ---: | --- | ---: | ---: |
 | **tool** | 6 | picks the right tool, and carries its result into the NEXT tool call | 1000 · 6/6 | 1000 · 6/6 |
-| **react** | 3 | decides *whether* to use a tool: refuses an ungranted one, reaches for a needed one, answers a known fact without either | 0 · 0/3 | 1000 · 3/3 |
+| **react** | 3 | decides *whether* to use a tool: refuses an ungranted one, reaches for a needed one, answers a known fact without either | 1000 · 3/3 | 1000 · 3/3 |
 | **reach** | 3 | reaches past the prompt — searches a dataset of 61 documents built around near-misses, recalls a memory, inherits a capability | 1000 · 3/3 | 666 · 2/3 |
 | **swarm** | 1 | N agents in parallel, one gather merging their committed outputs | 1000 · 1/1 | 1000 · 1/1 |
 | **script** | 3 | runs a registered script in the sandbox and answers from what it computed | 1000 · 3/3 | 666 · 2/3 |
-| **http** | 2 | reaches a tool over the **network** under a bearer credential, and pages through a result set | 0 · 0/2 | 0 · 0/2 |
-| **failure** | 4 | recovers when a tool errors, hangs, or returns garbage — and a healthy control that fails if it starts distrusting every tool | 1000 · 4/4 | 500 · 2/4 |
+| **http** | 2 | reaches a tool over the **network** under a bearer credential, and pages through a result set | 1000 · 2/2 | 500 · 1/2 |
+| **failure** | 4 | recovers when a tool errors, hangs, or returns garbage — and a healthy control that fails if it starts distrusting every tool | 750 · 3/4 | 750 · 3/4 |
 | **menu** | 1 | picks correctly from a menu as long as the runtime will present | 1000 · 1/1 | 1000 · 1/1 |
-| **long** | 1 | sustains six tool calls across four tools inside the eight-turn ceiling | 0 · 0/1 | 0 · 0/1 |
-| **adversarial** | 2 | ignores an instruction planted in a tool's OUTPUT — while still acting on a legitimate request that merely looks like one | 500 · 1/2 | 1000 · 2/2 |
-| **irrelevance** | 4 | declines to fire when NOTHING on the menu applies — an email send and a live weather read no granted tool can serve — beside two look-alikes phrased the same way that a granted tool must serve, so an always-refuse policy fails | 1000 · 4/4 | 1000 · 4/4 |
-| **memory** | 2 | updates a stored fact and answers with the NEW value while the superseded row is still live, and abstains when memory holds no answer | 1000 · 2/2 | 500 · 1/2 |
+| **long** | 1 | sustains six tool calls across four tools inside the eight-turn ceiling | 1000 · 1/1 | 0 · 0/1 |
+| **adversarial** | 2 | ignores an instruction planted in a tool's OUTPUT — while still acting on a legitimate request that merely looks like one | 1000 · 2/2 | 1000 · 2/2 |
+| **irrelevance** | 4 | declines to fire when NOTHING on the menu applies — an email send and a live weather read no granted tool can serve — beside two look-alikes phrased the same way that a granted tool must serve, so an always-refuse policy fails | 750 · 3/4 | 1000 · 4/4 |
+| **memory** | 2 | updates a stored fact and answers with the NEW value while the superseded row is still live, and abstains when memory holds no answer | 1000 · 2/2 | 1000 · 2/2 |
 | **scaffold** | 2 | the model scaffolds the app's whole project LIVE (plans it, authors every file, 20-min budget), the app then RUNS, and the answer must carry a code that exists only inside the generated project — the contextual and codified lanes; a hosted app has no runnable blueprint, so it is out of scope here | 0 · 0/2 | 0 · 0/2 |
 | **workflow** | 7 | runs a STORED workflow definition by handle — canonical saved bytes, every warrant built server-side at run — through deterministic step kinds: a credentialed http dial, a 3-way parallel quorum join, a typed conditional whose untaken arm provably never dials, a journal-backed 3 s timer that carries its parent's bytes, a retry that recovers only via a FRESH attempt identity, and a continue policy whose failed branch commits a placeholder the join releases past; every oracle token exists only on the harness fixture, so the model is never what is being measured | 1000 · 7/7 | 1000 · 7/7 |
-| **nlauthor** | 5 | authors a durable POLICY ROLE, a SCHEDULED TRIGGER and a CREDENTIAL from one sentence of English — the runtime returns the exact typed request it would issue, so approving forwards the bytes that were shown; the secret arm proves a value never rides the preview, and an authority-exceeding ask (a role naming a tool nobody registered) must be REFUSED beside a near-identical ask that must SUCCEED, so an always-refuse surface cannot score | 1000 · 5/5 | 800 · 4/5 |
+| **nlauthor** | 5 | authors a durable POLICY ROLE, a SCHEDULED TRIGGER and a CREDENTIAL from one sentence of English — the runtime returns the exact typed request it would issue, so approving forwards the bytes that were shown; the secret arm proves a value never rides the preview, and an authority-exceeding ask (a role naming a tool nobody registered) must be REFUSED beside a near-identical ask that must SUCCEED, so an always-refuse surface cannot score | 800 · 4/5 | 800 · 4/5 |
 
 The same rates drawn with their denominators — identical bars are not identical evidence: a
 1000 from one task is one pass, a 1000 from six tasks is six.
@@ -318,37 +318,37 @@ The same rates drawn with their denominators — identical bars are not identica
 <!-- bench-chart:ollama — data checked against baseline.ollama.json by docs/site/scripts/check-docs.mjs; keep this anchor -->
 ```mermaid
 xychart-beta horizontal
-    title "task_success by family — Ollama gemma3:12b (passes/tasks)"
-    x-axis ["tool (6/6)", "react (0/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (0/2)", "failure (4/4)", "menu (1/1)", "long (0/1)", "adversarial (1/2)", "irrelevance (4/4)", "memory (2/2)", "scaffold (0/2)", "workflow (7/7)", "nlauthor (5/5)"]
+    title "task_success by family — Ollama gemma4:12b (passes/tasks)"
+    x-axis ["tool (6/6)", "react (3/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (2/2)", "failure (3/4)", "menu (1/1)", "long (1/1)", "adversarial (2/2)", "irrelevance (3/4)", "memory (2/2)", "scaffold (0/2)", "workflow (7/7)", "nlauthor (4/5)"]
     y-axis "per-mille" 0 --> 1000
-    bar [1000, 0, 1000, 1000, 1000, 0, 1000, 1000, 0, 500, 1000, 1000, 0, 1000, 1000]
+    bar [1000, 1000, 1000, 1000, 1000, 1000, 750, 1000, 1000, 1000, 750, 1000, 0, 1000, 800]
 ```
 
 <!-- bench-chart:llamacpp — data checked against baseline.llamacpp.json by docs/site/scripts/check-docs.mjs; keep this anchor -->
 ```mermaid
 xychart-beta horizontal
     title "task_success by family — llama.cpp kx-serve:gemma-4-12b-it-q4_k_m (passes/tasks)"
-    x-axis ["tool (6/6)", "react (3/3)", "reach (2/3)", "swarm (1/1)", "script (2/3)", "http (0/2)", "failure (2/4)", "menu (1/1)", "long (0/1)", "adversarial (2/2)", "irrelevance (4/4)", "memory (1/2)", "scaffold (0/2)", "workflow (7/7)", "nlauthor (4/5)"]
+    x-axis ["tool (6/6)", "react (3/3)", "reach (2/3)", "swarm (1/1)", "script (2/3)", "http (1/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (2/2)", "irrelevance (4/4)", "memory (2/2)", "scaffold (0/2)", "workflow (7/7)", "nlauthor (4/5)"]
     y-axis "per-mille" 0 --> 1000
-    bar [1000, 1000, 666, 1000, 666, 0, 500, 1000, 0, 1000, 1000, 500, 0, 1000, 800]
+    bar [1000, 1000, 666, 1000, 666, 500, 750, 1000, 0, 1000, 1000, 1000, 0, 1000, 800]
 ```
 
 ### Suite-wide
 
 | Metric | Ollama | llama.cpp |
 | --- | ---: | ---: |
-| `task_success` | 804 · 37/46 | 760 · 35/46 |
-| `tool_call_f1` † | 790 | 804 |
-| `tool_seq_fsa` | 576 · 15/26 | 692 · 18/26 |
-| `tool_seq_psa` † | 743 | 775 |
+| `task_success` | 891 · 41/46 | 826 · 38/46 |
+| `tool_call_f1` † | 930 | 893 |
+| `tool_seq_fsa` | 807 · 21/26 | 769 · 20/26 |
+| `tool_seq_psa` † | 903 | 865 |
 | `groundedness` ‡ | 1000 | 0 |
 | `context_recall` ‡ | 1000 | 0 |
-| `memory_quality` † | 500 | 1000 |
-| `loop_efficiency` † | 728 | 917 |
-| `injection_resistance` | 800 · 4/5 | 1000 · 5/5 |
+| `memory_quality` † | 1000 | 1000 |
+| `loop_efficiency` † | 821 | 910 |
+| `injection_resistance` | 1000 · 5/5 | 1000 · 5/5 |
 | `retrieval_success_at_8` | 1000 · 10/10 | 800 · 8/10 |
-| `pass_k4` | 333 · 1/3 | 333 · 1/3 |
-| `model_time_share` † | 863 | 876 |
+| `pass_k4` | 1000 · 3/3 | 1000 · 3/3 |
+| `model_time_share` † | 874 | 874 |
 
 The pass/fail rows carry their own denominators: `tool_seq_fsa` applies to the 26 tasks
 with a gold call sequence, `pass_k4` to the three corpus-flagged flagship tasks
@@ -367,17 +367,17 @@ dollar figure — a metric whose input the runtime does not record is not publis
 
 | Spike | Ollama | llama.cpp |
 | --- | ---: | ---: |
-| `tokens_per_task_mean` | 111 tokens | 123 tokens |
-| `tokens_per_success` | 138 tokens | 170 tokens |
-| `tokens_measured_tasks` | 31 tasks | 33 tasks |
-| `task_latency_ms_p50` | 53268 ms | 71080 ms |
-| `task_latency_ms_p95` | 120116 ms | 236398 ms |
-| `store_memory_latency_ms_p50` | 96 ms | 581 ms |
-| `store_memory_latency_ms_p95` | 118 ms | 664 ms |
-| `recall_memory_latency_ms_p50` | 93 ms | 727 ms |
-| `recall_memory_latency_ms_p95` | 100 ms | 802 ms |
-| `query_dataset_latency_ms_p50` | 111 ms | 549 ms |
-| `query_dataset_latency_ms_p95` | 121 ms | 599 ms |
+| `tokens_per_task_mean` | 268 tokens | 141 tokens |
+| `tokens_per_success` | 303 tokens | 173 tokens |
+| `tokens_measured_tasks` | 35 tasks | 33 tasks |
+| `task_latency_ms_p50` | 40257 ms | 70586 ms |
+| `task_latency_ms_p95` | 555232 ms | 304733 ms |
+| `store_memory_latency_ms_p50` | 104 ms | 527 ms |
+| `store_memory_latency_ms_p95` | 123 ms | 690 ms |
+| `recall_memory_latency_ms_p50` | 92 ms | 681 ms |
+| `recall_memory_latency_ms_p95` | 100 ms | 743 ms |
+| `query_dataset_latency_ms_p50` | 111 ms | 523 ms |
+| `query_dataset_latency_ms_p95` | 127 ms | 557 ms |
 | `rpc_probe_samples` | 32 calls | 32 calls |
 
 Seven of these are worth explaining, and none of them is flattering.
@@ -499,9 +499,9 @@ Reproduce it locally — the full form, because the bare command skips the famil
 fixtures it cannot provision and says so:
 
 ```bash
-KX_SERVE_OLLAMA=1 KX_SERVE_OLLAMA_MODELS=gemma3:12b,embeddinggemma:latest \
+KX_SERVE_OLLAMA=1 KX_SERVE_OLLAMA_MODELS=gemma4:12b,embeddinggemma:latest \
   KX_SERVE_EMBED_MODEL=embeddinggemma:latest just eval-bench      # Ollama
-ollama stop gemma3:12b && KX_SERVE_MODEL_GGUF=<gemma-4-12b.gguf> just eval-bench   # llama.cpp
+ollama stop gemma4:12b && KX_SERVE_MODEL_GGUF=<gemma-4-12b.gguf> just eval-bench   # llama.cpp
 ```
 
 Real-model numbers are not bit-reproducible — local sampling and quantisation vary — which is

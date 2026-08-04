@@ -4,6 +4,29 @@ All notable changes to kortecx are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). kortecx is in early
 development; interfaces may change before 1.0 — pin a commit if you build on it.
 
+### Changed
+
+- **Benchmark baselines are now captured on the same model family for both engines.** The two
+  committed baselines were captured on different models, so no engine comparison drawn from them
+  was valid. Both are now Gemma-4-family captures — `gemma4:12b` on Ollama and the same-family
+  GGUF on llama.cpp — with the embedding model recorded in each capture's environment. The Ollama
+  numbers are a fresh reading (the old baseline was a different model, so no delta is meaningful);
+  the llama.cpp numbers are a valid like-for-like recapture. The README and evaluation tables
+  moved with them.
+
+### Fixed
+
+- **The run view can now isolate an agentic run started with `Invoke`.** The identifier the
+  server returned for such runs named an internal placeholder that never appears in the run's
+  projection, so the console could only fall back to showing every step in the server's journal
+  behind a warning — and `kx invoke --wait` on the built-in react recipe could never observe
+  completion. The server now returns the chain's first admitted step as the run's anchor, the run
+  view scopes to it (retrying with the terminal id when a saved link carries a stale anchor), and
+  `--wait` / `--stream` on such runs observe real progress. The turn Timeline is unaffected.
+- **The dual-engine benchmark recapture script can complete its Ollama arm again.** It left the
+  llama.cpp model configured while turning Ollama on, which the bench's one-engine-per-run guard
+  correctly refuses; the second arm now clears the first arm's engine configuration.
+
 ### Added
 
 - **The live model test suites now run without a C++ toolchain.** Fifteen test files that drive a

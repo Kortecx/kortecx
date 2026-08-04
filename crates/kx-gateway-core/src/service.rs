@@ -2828,18 +2828,31 @@ impl KxGateway for GatewayService {
         } else {
             Vec::new()
         };
+        // For a react Invoke the coordinator swaps the validated seed for the
+        // chain's turn-0 Mote and admits ONLY the swap — the seed id (the salt
+        // above) is never admitted, so it resolves in no projection. The admitted
+        // id the submit outcome reports is the one anchor a client can look up.
+        let mut react_admitted: Option<Vec<u8>> = None;
         for (mote, warrant) in bound.motes {
-            self.submitter
+            let carries_seed = react_seed && react_chain_salt.as_slice() == mote.id.as_bytes();
+            let outcome = self
+                .submitter
                 .submit_mote(mote, warrant, false, react_seed)
                 .await
                 .map_err(submit_status)?;
+            if carries_seed && react_admitted.is_none() {
+                react_admitted = Some(outcome.mote_id.to_vec());
+            }
         }
+        let terminal_mote_id =
+            react_admitted.unwrap_or_else(|| bound.terminal_mote_id.as_bytes().to_vec());
 
         Ok(Response::new(proto::InvokeResponse {
             instance_id: instance_id.to_vec(),
             recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
-            // SERVER-DERIVED (from bind → compile, never client-supplied).
-            terminal_mote_id: bound.terminal_mote_id.as_bytes().to_vec(),
+            // SERVER-DERIVED: the bound sink Mote for a plain recipe; the
+            // coordinator-ADMITTED turn-0 for a react chain.
+            terminal_mote_id,
             react_chain_salt,
         }))
     }

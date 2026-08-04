@@ -8,25 +8,27 @@
     "arch": "aarch64",
     "cores": 8,
     "task_count": 46,
-    "captured_unix_s": 1785486367,
-    "git_sha": "d9d43246cfabc95aca9808cca30b445f4876b317"
+    "captured_unix_s": 1785796882,
+    "git_sha": "0f16840fa5523e91763f87ff4b95f0db2f94fa82",
+    "embed_model": "kx-serve:gemma-4-12b-it-q4_k_m",
+    "embed_is_decoder": true
   },
   "gates": [
     {
       "id": "task_success",
-      "per_mille": 760
+      "per_mille": 826
     },
     {
       "id": "tool_call_f1",
-      "per_mille": 804
+      "per_mille": 893
     },
     {
       "id": "tool_seq_fsa",
-      "per_mille": 692
+      "per_mille": 769
     },
     {
       "id": "tool_seq_psa",
-      "per_mille": 775
+      "per_mille": 865
     },
     {
       "id": "groundedness",
@@ -38,7 +40,7 @@
     },
     {
       "id": "loop_efficiency",
-      "per_mille": 917
+      "per_mille": 910
     },
     {
       "id": "memory_quality",
@@ -46,7 +48,7 @@
     },
     {
       "id": "model_time_share",
-      "per_mille": 876
+      "per_mille": 874
     },
     {
       "id": "injection_resistance",
@@ -74,7 +76,7 @@
     },
     {
       "id": "model_time_share@adversarial",
-      "per_mille": 999
+      "per_mille": 998
     },
     {
       "id": "injection_resistance@adversarial",
@@ -82,31 +84,31 @@
     },
     {
       "id": "task_success@failure",
-      "per_mille": 500
+      "per_mille": 750
     },
     {
       "id": "tool_call_f1@failure",
-      "per_mille": 666
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_fsa@failure",
-      "per_mille": 666
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_psa@failure",
-      "per_mille": 666
+      "per_mille": 1000
     },
     {
       "id": "loop_efficiency@failure",
-      "per_mille": 916
+      "per_mille": 928
     },
     {
       "id": "model_time_share@failure",
-      "per_mille": 892
+      "per_mille": 871
     },
     {
       "id": "task_success@http",
-      "per_mille": 0
+      "per_mille": 500
     },
     {
       "id": "tool_call_f1@http",
@@ -122,11 +124,11 @@
     },
     {
       "id": "loop_efficiency@http",
-      "per_mille": 791
+      "per_mille": 1000
     },
     {
       "id": "model_time_share@http",
-      "per_mille": 998
+      "per_mille": 997
     },
     {
       "id": "task_success@irrelevance",
@@ -158,7 +160,7 @@
     },
     {
       "id": "tool_call_f1@long",
-      "per_mille": 285
+      "per_mille": 600
     },
     {
       "id": "tool_seq_fsa@long",
@@ -166,7 +168,7 @@
     },
     {
       "id": "tool_seq_psa@long",
-      "per_mille": 166
+      "per_mille": 500
     },
     {
       "id": "loop_efficiency@long",
@@ -178,7 +180,7 @@
     },
     {
       "id": "task_success@memory",
-      "per_mille": 500
+      "per_mille": 1000
     },
     {
       "id": "tool_call_f1@memory",
@@ -226,7 +228,7 @@
     },
     {
       "id": "model_time_share@menu",
-      "per_mille": 999
+      "per_mille": 998
     },
     {
       "id": "task_success@nlauthor",
@@ -246,15 +248,15 @@
     },
     {
       "id": "tool_call_f1@reach",
-      "per_mille": 500
+      "per_mille": 833
     },
     {
       "id": "tool_seq_fsa@reach",
-      "per_mille": 333
+      "per_mille": 666
     },
     {
       "id": "tool_seq_psa@reach",
-      "per_mille": 444
+      "per_mille": 777
     },
     {
       "id": "groundedness@reach",
@@ -266,7 +268,7 @@
     },
     {
       "id": "loop_efficiency@reach",
-      "per_mille": 809
+      "per_mille": 618
     },
     {
       "id": "memory_quality@reach",
@@ -274,7 +276,7 @@
     },
     {
       "id": "model_time_share@reach",
-      "per_mille": 990
+      "per_mille": 989
     },
     {
       "id": "task_success@react",
@@ -306,11 +308,11 @@
     },
     {
       "id": "loop_efficiency@scaffold",
-      "per_mille": 166
+      "per_mille": 71
     },
     {
       "id": "model_time_share@scaffold",
-      "per_mille": 996
+      "per_mille": 993
     },
     {
       "id": "task_success@script",
@@ -334,7 +336,7 @@
     },
     {
       "id": "model_time_share@script",
-      "per_mille": 995
+      "per_mille": 996
     },
     {
       "id": "task_success@swarm",
@@ -370,7 +372,7 @@
     },
     {
       "id": "model_time_share@tool",
-      "per_mille": 993
+      "per_mille": 994
     },
     {
       "id": "task_success@workflow",
@@ -410,7 +412,7 @@
     },
     {
       "id": "pass_k4",
-      "per_mille": 333
+      "per_mille": 1000
     },
     {
       "id": "pass_k4@trials",
@@ -425,22 +427,22 @@
     },
     {
       "id": "task_latency_ms_p50",
-      "value": 71080.0,
+      "value": 70586.0,
       "unit": "ms"
     },
     {
       "id": "task_latency_ms_p95",
-      "value": 236398.0,
+      "value": 304733.0,
       "unit": "ms"
     },
     {
       "id": "task_latency_ms_max",
-      "value": 526128.0,
+      "value": 604531.0,
       "unit": "ms"
     },
     {
       "id": "suite_latency_ms_total",
-      "value": 3406470.0,
+      "value": 3618441.0,
       "unit": "ms"
     },
     {
@@ -450,7 +452,7 @@
     },
     {
       "id": "tokens_per_task_mean",
-      "value": 123.0,
+      "value": 141.0,
       "unit": "tokens"
     },
     {
@@ -465,7 +467,7 @@
     },
     {
       "id": "tokens_per_task_mean@reach",
-      "value": 54.0,
+      "value": 126.0,
       "unit": "tokens"
     },
     {
@@ -480,12 +482,12 @@
     },
     {
       "id": "tokens_per_task_mean@http",
-      "value": 76.0,
+      "value": 88.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@failure",
-      "value": 83.0,
+      "value": 66.0,
       "unit": "tokens"
     },
     {
@@ -495,7 +497,7 @@
     },
     {
       "id": "tokens_per_task_mean@long",
-      "value": 112.0,
+      "value": 441.0,
       "unit": "tokens"
     },
     {
@@ -510,22 +512,22 @@
     },
     {
       "id": "tokens_per_task_mean@memory",
-      "value": 48.0,
+      "value": 65.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@scaffold",
-      "value": 2234.0,
+      "value": 2285.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_success",
-      "value": 170.0,
+      "value": 173.0,
       "unit": "tokens"
     },
     {
       "id": "scaffold_ms@scaffold-contextual-runs",
-      "value": 455996.0,
+      "value": 448401.0,
       "unit": "ms"
     },
     {
@@ -535,7 +537,7 @@
     },
     {
       "id": "scaffold_ms@scaffold-codified-runs",
-      "value": 724023.0,
+      "value": 686309.0,
       "unit": "ms"
     },
     {
@@ -550,32 +552,32 @@
     },
     {
       "id": "store_memory_latency_ms_p50",
-      "value": 581.0,
+      "value": 527.0,
       "unit": "ms"
     },
     {
       "id": "store_memory_latency_ms_p95",
-      "value": 664.0,
+      "value": 690.0,
       "unit": "ms"
     },
     {
       "id": "recall_memory_latency_ms_p50",
-      "value": 727.0,
+      "value": 681.0,
       "unit": "ms"
     },
     {
       "id": "recall_memory_latency_ms_p95",
-      "value": 802.0,
+      "value": 743.0,
       "unit": "ms"
     },
     {
       "id": "query_dataset_latency_ms_p50",
-      "value": 549.0,
+      "value": 523.0,
       "unit": "ms"
     },
     {
       "id": "query_dataset_latency_ms_p95",
-      "value": 599.0,
+      "value": 557.0,
       "unit": "ms"
     },
     {
@@ -585,12 +587,12 @@
     },
     {
       "id": "pass_k4@http-authed-lookup",
-      "value": 0.0,
+      "value": 1000.0,
       "unit": "per_mille"
     },
     {
       "id": "pass_k4@failure-tool-errors-recovers",
-      "value": 0.0,
+      "value": 1000.0,
       "unit": "per_mille"
     }
   ]

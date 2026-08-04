@@ -132,6 +132,11 @@ export interface UseProjectionOptions {
    * `motes` without it will silently present the whole journal as the run.)
    */
   scopeMoteId?: string;
+  /**
+   * A second anchor tried only when `scopeMoteId` resolves to nothing (see
+   * {@link scopeProjection}). The run view passes its `terminal` search key.
+   */
+  scopeFallbackMoteId?: string;
 }
 
 /** A projection plus whether a requested scope could be applied. */
@@ -147,15 +152,34 @@ export interface ScopedProjectionVM extends ProjectionVM {
   readonly scopeMissed: boolean;
 }
 
-/** Narrow a projection to one submission (see {@link UseProjectionOptions.scopeMoteId}). */
-export function scopeProjection(p: ProjectionVM, scopeMoteId?: string): ScopedProjectionVM {
+/**
+ * Narrow a projection to one submission (see {@link UseProjectionOptions.scopeMoteId}).
+ *
+ * `scopeFallbackMoteId` is a SECOND anchor tried only when the first resolves to
+ * nothing. The run view passes `terminal` here: a react Invoke's `chain=` carries the
+ * chain SALT (the Timeline's `ListReactTurns` key), and from a server that returned
+ * the discarded seed as its anchor the salt names no Mote — the terminal (the
+ * admitted turn-0) still does. `scopeMissed` is true only when BOTH miss.
+ */
+export function scopeProjection(
+  p: ProjectionVM,
+  scopeMoteId?: string,
+  scopeFallbackMoteId?: string,
+): ScopedProjectionVM {
   if (!scopeMoteId) {
     return { ...p, scopeMissed: false };
   }
   const motes = connectedComponent(p.motes, scopeMoteId);
-  return motes.length > 0
-    ? { ...p, motes: [...motes], scopeMissed: false }
-    : { ...p, scopeMissed: true };
+  if (motes.length > 0) {
+    return { ...p, motes: [...motes], scopeMissed: false };
+  }
+  if (scopeFallbackMoteId && scopeFallbackMoteId !== scopeMoteId) {
+    const fallback = connectedComponent(p.motes, scopeFallbackMoteId);
+    if (fallback.length > 0) {
+      return { ...p, motes: [...fallback], scopeMissed: false };
+    }
+  }
+  return { ...p, scopeMissed: true };
 }
 
 export function useProjection(instanceId: string | undefined, opts: UseProjectionOptions = {}) {
@@ -163,12 +187,17 @@ export function useProjection(instanceId: string | undefined, opts: UseProjectio
   const atSeq = opts.atSeq;
   const terminalMoteId = opts.terminalMoteId;
   const scopeMoteId = opts.scopeMoteId;
+  const scopeFallbackMoteId = opts.scopeFallbackMoteId;
   // Tracks the journal frontier across polls for the fallback stop heuristic.
   const frontier = useRef<{ key: string; lastSeq: number }>({ key: "", lastSeq: -1 });
   return useQuery({
     // The scope is part of the identity: two views of the same instance scoped to
     // different submissions are different data, not a cache hit.
-    queryKey: [...queryKeys.projection(endpoint, instanceId ?? "", atSeq), scopeMoteId ?? ""],
+    queryKey: [
+      ...queryKeys.projection(endpoint, instanceId ?? "", atSeq),
+      scopeMoteId ?? "",
+      scopeFallbackMoteId ?? "",
+    ],
     enabled: status === "connected" && client !== null && Boolean(instanceId),
     queryFn: async (): Promise<ScopedProjectionVM> => {
       if (!client || !instanceId) {
@@ -181,7 +210,7 @@ export function useProjection(instanceId: string | undefined, opts: UseProjectio
       // Scope INSIDE the query fn so every consumer of this hook — the DAG, the mote
       // table, artifacts, metrics, the per-mote detail fan-out — inherits one run's
       // worth of data, and the fan-out shrinks from workspace-sized to run-sized.
-      return scopeProjection(toProjectionVM(view), scopeMoteId);
+      return scopeProjection(toProjectionVM(view), scopeMoteId, scopeFallbackMoteId);
     },
     refetchInterval: (query) => {
       if (atSeq != null) {
