@@ -96,8 +96,16 @@ recipe; the model can then list files and reason over the result, committed as a
 durable Observation.
 
 ```bash
-KX_SERVE_FS_ROOT=/path/to/readable/dir kx serve --features inference
+# Works on the prebuilt (Ollama-backed) binary and on an `inference` build alike —
+# the fs tools also need a SERVED MODEL (no model ⇒ no react chain to drive them).
+KX_SERVE_FS_ROOT=/path/to/readable/dir kx serve --dev-allow-local
 ```
+
+(`--features` is a **cargo build** flag, not a `kx serve` argument. To serve a model
+fully in-process, install a build that has the feature — `cargo install --path
+crates/kx-cli --features inference,console,hnsw,hosted-apps` — and then run `kx serve`
+as above. A bare `cargo build` leaves the binary in `target/`, where a plain `kx serve`
+would not find it.)
 
 `fs-list` never reads file *contents* — it returns names only, confined to the
 granted mount (canonicalized; no traversal out).

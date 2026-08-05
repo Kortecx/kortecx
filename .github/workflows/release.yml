@@ -45,64 +45,30 @@ jobs:
         run: cargo --version
 
       # D139: the prebuilt binary ships the EMBEDDED WEB CONSOLE — the `console`
-      # feature embeds `ui/dist` at compile time, so the SPA (and the TS SDK it
-      # depends on) is built here first. Node is a RELEASE-RUNNER tool only;
-      # plain `cargo build/install -p kx-cli` stays node-free (feature off).
+      # feature embeds `ui/dist` at compile time, so the packaging script builds
+      # the SPA (and the TS SDK it depends on) first. Node is a RELEASE-RUNNER
+      # tool only; plain `cargo build/install -p kx-cli` stays node-free.
       - name: Set up Node (console embed input)
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - name: Build the TS SDK + the web console dist
-        run: |
-          npm --prefix bindings/typescript ci
-          npm --prefix bindings/typescript run build
-          npm --prefix ui ci
-          npm --prefix ui run build
-
-      # The FFI wall, asserted on the EXACT feature set this job ships: none of
-      # `console` / `hnsw` / `serve-engine` / `hosted-apps` may ever drag the llama.cpp
-      # FFI into the closure (serve-engine adds the FFI-FREE Ollama backend; the
-      # in-process llama.cpp path stays the opt-in `inference` build — PR-A.1;
-      # hosted-apps adds only tokio/process + tokio/io-util and zero crates). The
-      # required `build-serve-engine` CI job re-proves this on a toolchain-free runner.
-      - name: FFI wall (console,hnsw,serve-engine,hosted-apps stays llama.cpp-free)
-        shell: bash
-        run: |
-          if cargo tree -p kx-cli --features console,hnsw,serve-engine,hosted-apps -e normal | grep -qE 'kx-llamacpp'; then
-            echo "::error::the console/hnsw/serve-engine/hosted-apps features dragged the FFI into kx-cli"; exit 1
-          fi
-          # W6.1: the release deliberately excludes the observability stack
-          # (audit + monitoring are a Cloud capability) — kx-otel appearing in
-          # THIS closure means the exclusion silently regressed.
-          if cargo tree -p kx-cli --features console,hnsw,serve-engine,hosted-apps -e normal | grep -qE 'kx-otel'; then
-            echo "::error::the release feature set linked kx-otel (observability must stay opt-in)"; exit 1
-          fi
-
-      # PR-A.1: the prebuilt now ships `serve-engine` (FFI-free), so a toolchain-free
+      # PR-A.1: the prebuilt ships `serve-engine` (FFI-free), so a toolchain-free
       # `curl | install.sh` install AUTO-DETECTS a running Ollama daemon and serves
       # local models out of the box. llama.cpp stays the opt-in `--features inference`
-      # build (needs a C++ toolchain).
+      # build (needs a C++ toolchain). D213: `hosted-apps` ships too — without it the
+      # four hosted RPCs answer `unimplemented` on the released binary.
       #
-      # D213: `hosted-apps` ships too. Without it the four hosted RPCs answer
-      # `unimplemented` on the released binary, so a user can create a hosted App in the
-      # console and never start one. It is FFI-free by construction (see the wall above)
-      # and adds no BUILD dependency — serving a hosted App needs Node/npm at RUN time.
-      - name: Build kx (FFI-free; embedded console + datasets + Ollama serve + hosted Apps)
-        run: cargo build --release -p kx-cli --features console,hnsw,serve-engine,hosted-apps
-
-      - name: Package + checksum
+      # The ENTIRE build+package body — the feature list, the FFI/kx-otel walls,
+      # the 7 bundled tool bins (kx-mcp-echo/calc/kv + the four connectors), the
+      # kx-tools tarball, and the sha256 sidecars — lives in scripts/package-release.sh,
+      # which `just verify-release-parity` executes at PR time. This workflow runs only
+      # on a tag ("a tag IS its first execution" — the v0.2.0-rc.1 scar below), so the
+      # script is the seam that lets the packaging be proven BEFORE the tag. Keep this
+      # step a bare script call: inlining any packaging logic here re-opens the gap.
+      - name: Build + package (scripts/package-release.sh — shared with verify-release-parity)
         shell: bash
-        run: |
-          asset="kx-${{ matrix.target }}"
-          cp target/release/kx "$asset"
-          strip "$asset" || true
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "$asset" > "$asset.sha256"
-          else
-            shasum -a 256 "$asset" > "$asset.sha256"
-          fi
-          cat "$asset.sha256"
+        run: bash scripts/package-release.sh "${{ matrix.target }}" .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -111,6 +77,8 @@ jobs:
           path: |
             kx-${{ matrix.target }}
             kx-${{ matrix.target }}.sha256
+            kx-tools-${{ matrix.target }}.tar.gz
+            kx-tools-${{ matrix.target }}.tar.gz.sha256
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -148,6 +116,16 @@ jobs:
           rm -f kx-*.sha256
           echo "=== release assets ==="; ls -la
           echo "=== checksums.txt ==="; cat checksums.txt
+          # Fail-closed asset census: 3 targets × (kx binary + kx-tools tarball)
+          # + checksums.txt. upload-artifact's if-no-files-found:error fires only
+          # when NOTHING matches, so a leg that half-packaged would otherwise
+          # publish a release that re-creates the missing-tools incident.
+          assets=$(find . -maxdepth 1 -type f | wc -l | tr -d ' ')
+          rows=$(wc -l < checksums.txt | tr -d ' ')
+          if [ "$assets" -ne 7 ] || [ "$rows" -ne 6 ]; then
+            echo "::error::asset census failed: $assets files (want 7), $rows checksum rows (want 6)"
+            exit 1
+          fi
 
       # The release body is the CHANGELOG's own section for this tag, not a generated
       # list of merged PR titles. `--generate-notes` answers "which branches landed";

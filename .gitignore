@@ -17,6 +17,12 @@
 # proptest failure-persistence artifacts (auto-generated cache; not stable across runs)
 **/*.proptest-regressions
 
+# ---- Python ----
+# Bytecode from the tracked helper scripts (scripts/stub-ollama.py is executed by
+# `just verify-release-parity`, which regenerates this on every run).
+__pycache__/
+*.pyc
+
 # ---- Editor / OS ----
 .DS_Store
 *.swp
@@ -88,6 +94,11 @@ kx-cloud/
 # The release workflow reads this to publish the CHANGELOG section as the release
 # body, so it must be in the checkout the workflow runs against.
 !/scripts/release-notes.sh
+# The SINGLE owner of the release build+package body: release.yml calls it on a
+# tag and `just verify-release-parity` calls it at PR time, so the packaging the
+# gate proves is the packaging the tag runs. Untracked, both callers would run
+# nothing — the registry-check incident shape, again.
+!/scripts/package-release.sh
 # The NL-authoring live proof and its detached supervisors. These SHIP: a proof that
 # lives only on the machine that ran it is a claim, not evidence — anyone should be
 # able to re-run the journey (propose -> approve -> registry, plus the refusal A/B)

@@ -139,7 +139,10 @@ await client.connections.add({ name: "gh", endpoint: "npx",
 
 ```bash title="CLI"
 kx secrets set --name GITHUB_TOKEN --value ghp_xxxxxxxxxxxxxxxxxxxx
-kx connections add --name gh --command "npx -y @some/github-mcp" --credential-ref GITHUB_TOKEN
+# `--command` is one program path (spawned directly — no shell, no word-splitting);
+# each argument is its own `--arg`.
+kx connections add --name gh --command npx --arg -y --arg @some/github-mcp \
+  --credential-ref GITHUB_TOKEN
 ```
 
 The connector itself must never echo this value back — see the connector

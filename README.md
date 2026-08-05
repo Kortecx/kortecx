@@ -107,10 +107,21 @@ project, and starts a dev server. Three frameworks today — **Vite + React**, *
 A bounded loop — reason, call a tool, observe, answer — where every turn is committed to the journal
 before the next begins. Crash halfway and it resumes from the last committed turn.
 
+The read-only host file tools are default-OFF. Grant them a root when you start the
+serve — in its own terminal, since it runs in the foreground:
+
+```bash
+KX_SERVE_FS_ROOT=~/notes kx serve --dev-allow-local
+```
+
 ```bash
 kx chat --tools 'fs-list@1,fs-read@1' \
   --message 'Find the quarterly notes and tell me what the two incidents were.'
 ```
+
+Both legs are required: without a granted root, or without a served model, those
+tools never register and the runtime refuses the command by name rather than
+guessing — `agentic step references unregistered tool fs-list@1`.
 
 The model decides which tools to call and when to stop. Each call is staged, authorized against a
 server-issued warrant, then committed — so you can always ask what an agent actually did, and
@@ -493,13 +504,22 @@ The prebuilt binary is the fastest path and needs nothing but a shell:
 curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
 ```
 
-It ships the web console and the dataset data-plane, and serves local models through Ollama.
+It ships the web console and the dataset data-plane, serves local models through Ollama, and
+installs seven tool binaries beside `kx`: the bundled agent tools `kx-mcp-echo`, `kx-mcp-calc`
+and `kx-mcp-kv` — the runtime resolves these from there to seed its agent recipes — plus the four
+`kx-connector-*` sidecars that `kx connections add --provider …` dials.
 
-From source, one line gets you the same thing:
+From source, the runtime and its agent tools are two commands (without the second, the agent
+verbs refuse with an actionable message):
 
 ```bash
 cargo install --path crates/kx-cli --features console,hnsw,serve-engine,hosted-apps
+cargo install --path crates/kx-mcp --bin kx-mcp-echo --bin kx-mcp-calc --bin kx-mcp-kv
 ```
+
+The four connectors are one command each, and only if you want them: `cargo install --path
+integrations/kx-connector-gmail` (and friends) puts each beside `kx`. Check what resolved with
+`kx connections doctor`.
 
 Swap `serve-engine` for `inference` to build the in-process llama.cpp engine — that needs CMake, a
 C++ toolchain, and the `crates/kx-llamacpp-sys/llama.cpp` submodule. Building the console from

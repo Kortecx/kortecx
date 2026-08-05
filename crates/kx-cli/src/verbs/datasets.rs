@@ -304,7 +304,9 @@ fn map_datasets_status(status: tonic::Status) -> CliError {
     if status.code() == Code::Unimplemented {
         CliError::Rpc {
             code: Code::Unimplemented,
-            message: "datasets are not wired on this gateway (run `kx serve --features hnsw`)"
+            message: "datasets are not wired on this gateway (it was built without the \
+                      `hnsw` cargo feature — the prebuilt release binary has it; from \
+                      source: `cargo build -p kx-cli --features hnsw`, then `kx serve`)"
                 .into(),
             refusal_code: None,
         }

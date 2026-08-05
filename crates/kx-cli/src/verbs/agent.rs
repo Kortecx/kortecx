@@ -239,6 +239,47 @@ async fn select_handle(
             Ok(REACT_RECIPE_HANDLE)
         }
     } else {
+        // Form-gate the DEFAULT path like its `--image`/`--dataset` siblings. Without
+        // this probe an unprovisioned `kx/recipes/react` surfaces as a bare
+        // `PermissionDenied: not authorized` (the serve deliberately keeps unknown
+        // and unauthorized handles indistinguishable), which names neither the
+        // recipe nor the missing bundled tool binary.
+        // Only the codes an up-to-date serve actually returns for an unprovisioned
+        // handle count as "not provisioned": the deliberately-uniform PermissionDenied
+        // (unknown and unauthorized handles are indistinguishable by design) and
+        // NotFound. Any OTHER failure — the serve dying mid-call, a deadline, an auth
+        // problem, an older gateway without this RPC — means the PROBE failed, not the
+        // provisioning: fall through and let Invoke surface the real error rather than
+        // asserting a cause we have not established.
+        let unprovisioned = match client
+            .get_recipe_form(resolved.request(proto::GetRecipeFormRequest {
+                handle: REACT_RECIPE_HANDLE.to_string(),
+            })?)
+            .await
+        {
+            Ok(_) => false,
+            Err(status) => matches!(
+                status.code(),
+                tonic::Code::PermissionDenied | tonic::Code::NotFound
+            ),
+        };
+        if unprovisioned {
+            // NOT `CliError::Usage`: the invocation is well-formed — the SERVE is
+            // missing a precondition. A usage error would print the whole CLI usage
+            // block ahead of this text (`render_error`), burying the one sentence
+            // that says what to do.
+            return Err(CliError::Rpc {
+                code: tonic::Code::FailedPrecondition,
+                message: "the agent recipe is not provisioned on this serve — it needs a \
+                          served model (a running Ollama daemon with a pulled model, or an \
+                          `inference` build with a GGUF) AND the bundled `kx-mcp-echo` tool \
+                          binary beside the `kx` executable (shipped in the release kx-tools \
+                          bundle; from a checkout, `cargo build -p kx-mcp` or set \
+                          KX_MCP_ECHO_PATH). The serve log names which one is missing."
+                    .into(),
+                refusal_code: None,
+            });
+        }
         Ok(REACT_RECIPE_HANDLE)
     }
 }

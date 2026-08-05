@@ -741,6 +741,57 @@ jobs:
         run: just verify-quickstart
 
   # ---------------------------------------------------------------------------
+  # verify-release-parity — the INSTALLED-ARTEFACT docs-as-test gate. Runs
+  # `just verify-release-parity`: packages via scripts/package-release.sh (the
+  # SAME script release.yml executes on a tag — the seam that makes tag-only
+  # packaging provable at PR time), installs via the REAL scripts/install.sh
+  # over loopback, then asserts the installed artefact carries its 7 bundled
+  # tool bins, reproduces the canonical digest, registers its capabilities,
+  # seeds kx/recipes/react, and BINDS the README's headline agentic command —
+  # against a loopback stub of Ollama's discovery surface (hermetic: no network,
+  # no real model; generation is asserted only by the local verify-release-live).
+  # Needs Node (the console embed) — the release feature set is the point.
+  # NON-REQUIRED: a new context, not in branch protection — promote it to
+  # required once it is green across a few runs (a separate, authorized
+  # branch-protection change).
+  # ---------------------------------------------------------------------------
+  verify-release-parity:
+    name: verify-release-parity (installed-artefact docs-as-test; hermetic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (NO submodules — the release artefact is FFI-free)
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-relparity-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-relparity-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Set up Node (console embed input)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: just verify-release-parity
+        run: just verify-release-parity
+
+  # ---------------------------------------------------------------------------
   # docker-smoke — in-container docs-as-test (the Docker track, Scope A). Builds the
   # FFI-free `kx` image and reproduces the canonical projection digest THROUGH the
   # container: a clean run, a crash-then-replay over a PERSISTED volume, and a

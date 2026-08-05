@@ -36,10 +36,12 @@ interface BundledConnector {
 }
 
 /**
- * The bundled set, as shipped. Static because it IS static — these are compiled
- * into the release, not discovered at runtime. A connector the operator built
- * themselves shows up under Connections once dialed, which is the surface for
- * anything not in this list.
+ * The bundled set, as shipped. Static because it IS static — these are separate
+ * sidecar binaries the release's kx-tools bundle installs BESIDE `kx` (the
+ * runtime resolves a bare command name against the executable's own directory
+ * first), not discovered at runtime. A connector the operator built themselves
+ * shows up under Connections once dialed, which is the surface for anything not
+ * in this list.
  */
 const BUNDLED: readonly BundledConnector[] = [
   {

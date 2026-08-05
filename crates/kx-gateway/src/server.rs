@@ -507,7 +507,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // def (settle/lease args-validation) when the root is set.
     //
     // D155: resolve the operator read root NON-gated by inference. The agentic
-    // fs-list/fs-read TOOLS still register only under `inference` (no model ⇒ no
+    // fs-list/fs-read TOOLS still register only under `serve-engine` (no model ⇒ no
     // ReAct loop to drive them), but the BRANCH snapshot (`SnapshotInto`) is a data
     // op — it reads files into CAS via the broker confinement, needs no model — so
     // its read root must resolve on any embedded-worker serve (incl. `--features

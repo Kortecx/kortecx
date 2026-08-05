@@ -613,31 +613,55 @@ mod macos {
 }
 
 /// Locate a binary the serve ships alongside itself — an operator override first,
-/// then the container image path, then the sibling of the running executable in a
-/// cargo `target/` tree (the developer case).
+/// then the container image path, then a sibling of the running executable (the
+/// installed case: `install.sh` unpacks the tool bins beside `kx`, and
+/// `cargo install` drops sibling bins into the same `~/.cargo/bin`), then the
+/// sibling of the running executable in a cargo `target/` tree (the developer
+/// case).
 ///
 /// Returns `None` when no candidate exists. Every caller treats that as
 /// "the capability this binary backs is unavailable", never as a reason to run
 /// something else: a missing sandbox shim means scripts do not register at all.
 pub(crate) fn bundled_binary_path(bin: &str, env_override: &str) -> Option<std::path::PathBuf> {
+    bundled_binary_path_with(bin, env_override, std::env::current_exe().ok().as_deref())
+}
+
+/// The pure core of [`bundled_binary_path`], with the running-executable path
+/// injected so it is unit-testable without touching the process's real
+/// `current_exe` (the `resolve_program_with` precedent in kx-mcp). Every probe
+/// is `is_file` — `exists` would let a same-named DIRECTORY beside `kx` shadow
+/// the real binary and then fail at spawn with no diagnostic.
+pub(crate) fn bundled_binary_path_with(
+    bin: &str,
+    env_override: &str,
+    current_exe: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
 
     if let Some(over) = std::env::var_os(env_override) {
         let path = PathBuf::from(over);
-        if path.exists() {
+        if path.is_file() {
             return Some(path);
         }
     }
     let in_image = PathBuf::from(format!("/usr/local/libexec/kx/{bin}"));
-    if in_image.exists() {
+    if in_image.is_file() {
         return Some(in_image);
     }
-    let exe = std::env::current_exe().ok()?;
+    let exe = current_exe?;
+    // Installed case before the target/ walk: in a dev tree the exe itself sits
+    // in `target/{profile}/`, so the sibling probe and the walk agree there.
+    if let Some(dir) = exe.parent() {
+        let sibling = dir.join(bin);
+        if sibling.is_file() {
+            return Some(sibling);
+        }
+    }
     for ancestor in exe.ancestors() {
         if ancestor.file_name().is_some_and(|n| n == "target") {
             for profile in ["debug", "release"] {
                 let candidate = ancestor.join(profile).join(bin);
-                if candidate.exists() {
+                if candidate.is_file() {
                     return Some(candidate);
                 }
             }
@@ -671,5 +695,54 @@ impl MoteExecutor for RouterExecutor {
 fn internal(reason: &str) -> MoteExecutorError {
     MoteExecutorError::Internal {
         reason: reason.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod bundled_binary_path_tests {
+    use super::bundled_binary_path_with;
+    use std::fs;
+
+    /// An env var name no environment sets — keeps every arm below independent
+    /// of ambient `KX_MCP_*_PATH` overrides on the host running the tests.
+    const UNSET: &str = "KX_TEST_BUNDLED_BINARY_PATH_UNSET";
+
+    #[test]
+    fn a_sibling_of_the_installed_exe_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir(&bin_dir).unwrap();
+        fs::write(bin_dir.join("kx-mcp-echo"), b"#!/bin/sh\n").unwrap();
+        let exe = bin_dir.join("kx");
+        let got = bundled_binary_path_with("kx-mcp-echo", UNSET, Some(&exe));
+        assert_eq!(got, Some(bin_dir.join("kx-mcp-echo")));
+    }
+
+    #[test]
+    fn a_same_named_directory_is_not_mistaken_for_the_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(bin_dir.join("kx-mcp-echo")).unwrap();
+        let exe = bin_dir.join("kx");
+        let got = bundled_binary_path_with("kx-mcp-echo", UNSET, Some(&exe));
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn the_target_walk_still_resolves_for_a_dev_tree_test_binary() {
+        // Under `cargo test` the exe sits in target/debug/deps/ with no sibling;
+        // the walk up to the `target` ancestor must still find the built bin.
+        let dir = tempfile::tempdir().unwrap();
+        let release = dir.path().join("proj/target/release");
+        fs::create_dir_all(&release).unwrap();
+        fs::write(release.join("kx-mcp-echo"), b"#!/bin/sh\n").unwrap();
+        let exe = dir.path().join("proj/target/debug/deps/some_test_bin");
+        let got = bundled_binary_path_with("kx-mcp-echo", UNSET, Some(&exe));
+        assert_eq!(got, Some(release.join("kx-mcp-echo")));
+    }
+
+    #[test]
+    fn no_exe_and_no_override_is_none() {
+        assert_eq!(bundled_binary_path_with("kx-mcp-echo", UNSET, None), None);
     }
 }
