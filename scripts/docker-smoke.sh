@@ -26,7 +26,8 @@ IMAGE="${KX_IMAGE:-kortecx/kx:smoke}"
 CANON="7d22d4bdfc6f68a4311f40b20f3fe7c67f4c5d2b352f3bff8722b439e94a5af9"
 TOOL_BINS="kx-mcp-echo kx-mcp-calc kx-mcp-kv
 kx-connector-gmail kx-connector-discord kx-connector-slack kx-connector-notion"
-VOLUME="kx-smoke-$$"
+VOL_J="kx-smoke-j-$$"
+VOL_C="kx-smoke-c-$$"
 WORK="$(mktemp -d)"
 
 # Only the daemon probe may set this. Cleanup must never call docker before it does:
@@ -38,7 +39,7 @@ DAEMON_OK=0
 cleanup() {
     if [ "$DAEMON_OK" -eq 1 ]; then
         bounded 20 docker rm -f "kx-smoke-$$" >/dev/null 2>&1 || true
-        bounded 20 docker volume rm -f "$VOLUME" >/dev/null 2>&1 || true
+        bounded 20 docker volume rm -f "$VOL_J" "$VOL_C" >/dev/null 2>&1 || true
     fi
     rm -rf "$WORK"
 }
@@ -106,12 +107,19 @@ fi
 pass "the libexec probe rejects an absent binary (negative control)"
 
 # --- 3 · clean run reproduces the canonical digest ---------------------------------
-# The image declares the state dirs as VOLUMEs and `kx` reads FLAGS (never the env
-# vars the image sets for documentation), so every arm passes them explicitly.
+# ⚠ MOUNT AT THE DECLARED VOLUME PATHS, NOT THEIR PARENT. The image declares
+# VOLUME on /var/lib/kortecx/{journal,content,catalog}; a named volume mounted at the
+# PARENT is shadowed by the anonymous volume Docker creates for each declared subpath,
+# so every `docker run` gets a FRESH journal and nothing persists between them. That is
+# not a hypothetical: the parent-mount form passed the crash-then-replay arm anyway,
+# because `replay` re-executes on an empty journal and lands on the canonical digest —
+# only the standalone `digest` fold (a pure read) exposed it, returning the hash of
+# empty input. A persistence claim needs a mount the runtime's own VOLUMEs cannot hide.
 J="/var/lib/kortecx/journal/kx.db"
 C="/var/lib/kortecx/content"
-docker volume create "$VOLUME" >/dev/null
-RUN_OUT="$(docker run --rm -v "$VOLUME:/var/lib/kortecx" "$IMAGE" \
+MOUNTS="-v $VOL_J:/var/lib/kortecx/journal -v $VOL_C:/var/lib/kortecx/content"
+docker volume create "$VOL_J" >/dev/null; docker volume create "$VOL_C" >/dev/null
+RUN_OUT="$(docker run --rm $MOUNTS "$IMAGE" \
     run --journal "$J" --content "$C" 2>/dev/null || true)"
 [ "${RUN_OUT%% *}" = "$CANON" ] \
     || fail "clean-run digest '${RUN_OUT%% *}' != canonical $CANON"
@@ -120,28 +128,28 @@ case "$RUN_OUT" in *"(8/8 committed)"*) ;; *)
 pass "clean run reproduces the canonical digest in-container (8/8 committed)"
 
 # --- 4 · crash, then replay over the PERSISTED volume ------------------------------
-docker volume rm -f "$VOLUME" >/dev/null 2>&1 || true
-docker volume create "$VOLUME" >/dev/null
-if docker run --rm -v "$VOLUME:/var/lib/kortecx" "$IMAGE" \
+docker volume rm -f "$VOL_J" "$VOL_C" >/dev/null 2>&1 || true
+docker volume create "$VOL_J" >/dev/null; docker volume create "$VOL_C" >/dev/null
+if docker run --rm $MOUNTS "$IMAGE" \
     run --journal "$J" --content "$C" --crash-at post-commit-vtc >/dev/null 2>&1; then
     fail "the crash arm exited 0 — it did not crash, so the replay below proves nothing"
 fi
 pass "the crash arm fails as intended (so replay has something to recover)"
 
-REPLAY_OUT="$(docker run --rm -v "$VOLUME:/var/lib/kortecx" "$IMAGE" \
+REPLAY_OUT="$(docker run --rm $MOUNTS "$IMAGE" \
     replay --journal "$J" --content "$C" 2>/dev/null || true)"
 [ "${REPLAY_OUT%% *}" = "$CANON" ] \
     || fail "replay digest '${REPLAY_OUT%% *}' != canonical $CANON — exactly-once durability did not survive the container boundary"
 pass "crash-then-replay reproduces the canonical digest over a persisted volume"
 
 # --- 5 · a standalone digest fold, and a read-only rootfs --------------------------
-DIGEST_ONLY="$(docker run --rm -v "$VOLUME:/var/lib/kortecx" "$IMAGE" \
+DIGEST_ONLY="$(docker run --rm $MOUNTS "$IMAGE" \
     digest --journal "$J" --content "$C" 2>/dev/null || true)"
 [ "$DIGEST_ONLY" = "$CANON" ] \
     || fail "standalone digest '$DIGEST_ONLY' != canonical $CANON"
 pass "a standalone digest fold agrees in-container"
 
-RO_OUT="$(docker run --rm --read-only -v "$VOLUME:/var/lib/kortecx" "$IMAGE" \
+RO_OUT="$(docker run --rm --read-only $MOUNTS "$IMAGE" \
     digest --journal "$J" --content "$C" 2>/dev/null || true)"
 [ "$RO_OUT" = "$CANON" ] \
     || fail "read-only rootfs digest '$RO_OUT' != canonical $CANON"
