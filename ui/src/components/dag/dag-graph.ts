@@ -14,6 +14,13 @@ export interface GraphEdge {
   readonly target: string; // child mote id (hex)
   readonly edgeKind: ParentEdgeVM["edgeKind"];
   readonly nonCascade: boolean;
+  /**
+   * True when the reader SYNTHESISED this edge rather than reading it off a Mote's
+   * `parents[]`. An agent's turn order is durable but off-DAG, so the only honest way
+   * to draw it is to mark it as derived — the surface must never present a synthesised
+   * link as a recorded parent. See `derived-lineage.ts`.
+   */
+  readonly derived?: boolean;
 }
 
 /**
@@ -46,11 +53,22 @@ export function buildEdges(motes: readonly MoteVM[]): GraphEdge[] {
  * Deliberately EXCLUDES mote state/anomaly so a poll that only flips a state
  * yields an identical hash (→ no dagre relayout; cached positions are reused).
  * This is the load-bearing no-thrash invariant.
+ *
+ * `extraEdges` folds in edges the reader synthesised (an agent's turn order, which the
+ * runtime records off-DAG). They MUST be here: the layout memo is keyed on this hash
+ * alone, so a synthesised edge outside it would never trigger the relayout that places
+ * the turn it connects.
  */
-export function topologyHash(motes: readonly MoteVM[]): string {
+export function topologyHash(
+  motes: readonly MoteVM[],
+  extraEdges: readonly GraphEdge[] = [],
+): string {
   const ids = motes.map((m) => m.moteId).sort();
-  const edges = buildEdges(motes)
-    .map((e) => `${e.source}>${e.target}:${e.edgeKind}${e.nonCascade ? "!" : ""}`)
+  const edges = [...buildEdges(motes), ...extraEdges]
+    .map(
+      (e) =>
+        `${e.source}>${e.target}:${e.edgeKind}${e.nonCascade ? "!" : ""}${e.derived ? "~" : ""}`,
+    )
     .sort();
   return `${ids.join(",")}|${edges.join(",")}`;
 }
@@ -77,8 +95,29 @@ export function connectedComponent(
   motes: readonly MoteVM[],
   anchorMoteId: string,
 ): readonly MoteVM[] {
+  return componentOfAny(motes, [anchorMoteId]);
+}
+
+/**
+ * The union of the connected components containing ANY of `anchorMoteIds`, in the
+ * projection's own order, without duplicates. Anchors absent from the fold are ignored;
+ * if NONE is present the result is EMPTY, and a caller must treat that as "cannot scope
+ * this" exactly as with a single anchor.
+ *
+ * WHY A UNION IS NEEDED. A react/agentic run is not one component. The coordinator
+ * registers every turn Mote EDGE-FREE — declaring parents would move the canonical
+ * digest — and only a tool observation carries a Data edge, back to its own turn. So the
+ * run folds as N DISJOINT TWO-NODE STARS and a walk from one anchor reaches exactly one
+ * of them. The chain's real order lives off-DAG in the durable ReactRound facts, so the
+ * reader supplies each turn as its own anchor and unions what they reach.
+ */
+export function componentOfAny(
+  motes: readonly MoteVM[],
+  anchorMoteIds: readonly string[],
+): readonly MoteVM[] {
   const byId = new Map(motes.map((m) => [m.moteId, m]));
-  if (!byId.has(anchorMoteId)) {
+  const anchors = anchorMoteIds.filter((id) => byId.has(id));
+  if (anchors.length === 0) {
     return [];
   }
   // Adjacency in both directions, built once — `parents[]` only points upward.
@@ -100,8 +139,8 @@ export function connectedComponent(
       link(p.parentId, m.moteId);
     }
   }
-  const seen = new Set([anchorMoteId]);
-  const stack = [anchorMoteId];
+  const seen = new Set(anchors);
+  const stack = [...anchors];
   while (stack.length > 0) {
     const id = stack.pop();
     if (id === undefined) {

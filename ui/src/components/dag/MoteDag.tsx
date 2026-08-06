@@ -17,10 +17,14 @@ import { MoteNode } from "./MoteNode";
 import { NodeDetailDrawer } from "./NodeDetailDrawer";
 import { SwarmOverview } from "./SwarmOverview";
 import { buildEdges, topologyHash } from "./dag-graph";
+import { derivedChainEdges } from "./derived-lineage";
 import { buildFlowEdges, buildFlowNodes, miniMapColor } from "./flow";
 import type { MoteFlowNode } from "./flow";
 import { layoutGraph } from "./layout";
 import { branchEdgeIds, detectSwarm } from "./swarm-shape";
+
+/** Stable empty roster — an inline `[]` would re-run every memo keyed on it. */
+const NO_ROSTER: readonly string[] = [];
 
 /**
  * Above this many Motes the DAG falls back to the table. All nodes within the cap
@@ -37,7 +41,11 @@ const nodeTypes = { mote: MoteNode };
 
 function DagFlow({ projection }: { projection: ProjectionVM }) {
   const motes = projection.motes;
-  const topoHash = useMemo(() => topologyHash(motes), [motes]);
+  // The agent's turn order, which the runtime records OFF-DAG (turn Motes are edge-free
+  // by design). These edges are synthesised, flagged `derived`, and drawn differently.
+  const roster = projection.agenticTurnIds ?? NO_ROSTER;
+  const derived = useMemo(() => derivedChainEdges(roster, motes), [roster, motes]);
+  const topoHash = useMemo(() => topologyHash(motes, derived), [motes, derived]);
   // The clicked Mote (drawer). Selection is for the DETAIL overlay only — reactflow's
   // own `elementsSelectable` stays OFF, so this never perturbs nodes/edges/layout.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -45,12 +53,14 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
 
   // Relayout ONLY when the topology hash changes; a state-only poll reuses the
   // cached positions (the no-thrash invariant — see dag-graph.topologyHash).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: relayout is intentionally keyed on the topology hash only — a state-only poll must NOT relayout.
+  // The DERIVED edges go to dagre too: without them an agent run's turns are N
+  // parentless roots and lay out as a wide row of disconnected pairs.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: relayout is intentionally keyed on the topology hash only (which now folds in the derived edges) — a state-only poll must NOT relayout.
   const positions = useMemo(
     () =>
       layoutGraph(
         motes.map((m) => m.moteId),
-        buildEdges(motes),
+        [...buildEdges(motes), ...derived],
       ),
     [topoHash],
   );
@@ -60,8 +70,11 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
   const swarmStructure = useMemo(() => detectSwarm(motes), [topoHash]);
   const gatherId = swarmStructure?.gatherId;
   // Edges are topology — recompute only on a topology change; branch fan-in edges are highlighted.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: edges depend on topology only (same justification as positions).
-  const edges = useMemo(() => buildFlowEdges(motes, branchEdgeIds(swarmStructure)), [topoHash]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: edges depend on topology only (which now folds in the derived edges — same justification as positions).
+  const edges = useMemo(
+    () => buildFlowEdges(motes, branchEdgeIds(swarmStructure), derived),
+    [topoHash],
+  );
   // Batch-resolve every committed result (one RPC, shared with the table). `byRef`
   // is reference-stable across an unchanged poll (memoized in useResultMap), so it
   // doesn't re-create nodes — node DATA only re-merges when results actually land.
@@ -120,6 +133,12 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
           className="dag-minimap"
         />
       </ReactFlow>
+      {derived.length > 0 ? (
+        <p className="dag-legend muted" data-testid="dag-derived-legend">
+          Dotted links are the agent's turn order, read from this run's turn record — the runtime
+          records no parent between turns.
+        </p>
+      ) : null}
       {selected ? (
         <NodeDetailDrawer
           // Keyed by the Mote so switching nodes REMOUNTS the drawer — the

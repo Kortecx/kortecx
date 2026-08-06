@@ -6,7 +6,7 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 685 KiB raw (701,440 B — the value enforced below; keep this line in
+ * Budget: 688 KiB raw (704,512 B — the value enforced below; keep this line in
  * lock-step with it, and with the step name in ci.yml, or the doc becomes the
  * third place that disagrees). Override with KX_UI_EAGER_BUDGET_BYTES for
  * emergencies — a deliberate, reviewed override, never a silent default bump.
@@ -125,6 +125,27 @@
  *     Note also that 680 KiB was never viable: main ALONE was 694,167 B against a
  *     696,320 B ceiling — 2,153 B of headroom before this branch added anything.
  *
+ *   685 KiB -> 688 KiB, the run view reads a run's agentic chain. The projection
+ *     hook gains the chain fetch + the roster builder, and `dag-graph` gains the
+ *     multi-anchor component walk; both modules are already eager because the
+ *     route tree imports the run route statically. The DRAWING of the chain —
+ *     `derived-lineage.ts` — is in the lazy MoteDag chunk and costs zero here,
+ *     which is why the delta is under 1 KiB rather than the several the visual
+ *     might suggest. The roster builder deliberately RESTATES the turn-ordering
+ *     rule instead of importing it from `use-react-progress`: that module has no
+ *     eager importer today, and importing it would hoist a whole lazy chunk into
+ *     the entry.
+ *     Measured A/B by the procedure above, both arms in one session against the
+ *     SAME freshly-built SDK dist (this PR changes no SDK surface, so the SDK is
+ *     constant across arms — the cleanest A/B in this file's history):
+ *       baseline 700,072 B -> this branch 701,719 B  (+1,647 B eager, ~2‰)
+ *     ⚠ The branch FITS the old 701,440 B ceiling on this host and still needs the
+ *     bump, because the ABSOLUTE is not comparable across hosts and the DELTA is:
+ *     CI measured 701,397 B for the same baseline (1,325 B above this host), so
+ *     CI lands at ~703,044 B and would fail. Bumped to 688 KiB = 704,512 B, leaving
+ *     ~1,468 B of projected CI headroom — one KiB above the next boundary, because
+ *     the host offset is an ESTIMATE and a 444 B margin is not one.
+ *
  * Exit 1 over budget. The printed table doubles as the measurement evidence blob.
  */
 
@@ -143,7 +164,7 @@ const DIST = join(UI_ROOT, "dist");
 // `deriveApp` mapping additions, and the SDK client is eager on every route. Adding a
 // per-step contract axis buys that; bumping here — in the PR that spends it — is the same move
 // #375, #363, #362, #358 and #304 each made.
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 701_440);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 704_512);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {

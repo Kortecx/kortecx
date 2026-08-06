@@ -86,6 +86,22 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release -p kx-executor --example pure_body \
  && strip target/release/examples/pure_body \
  && cp target/release/examples/pure_body /usr/local/libexec/kx/pure_body
+# The runtime's OWN tools. Serve-boot seeds `kx/recipes/react` only once the bundled
+# stdio tool's capability registers, and the connectors resolve as siblings of `kx` —
+# so without these the image boots, advertises the agent verb, and then refuses it with
+# an unrelated-looking permission error. Same set the release tarball ships
+# (scripts/package-release.sh); keep the two lists in lock-step. Still FFI-free.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p kx-mcp --bins \
+ && for c in kx-connector-gmail kx-connector-discord kx-connector-slack kx-connector-notion; do \
+      cargo build --release -p "$c" --bin "$c"; \
+    done \
+ && for b in kx-mcp-echo kx-mcp-calc kx-mcp-kv \
+             kx-connector-gmail kx-connector-discord kx-connector-slack kx-connector-notion; do \
+      strip "target/release/$b"; \
+      cp "target/release/$b" "/usr/local/libexec/kx/$b"; \
+    done
 
 # ---- prebuilt (FAST variant): COPY the verified `kx` from the GitHub Release ---
 # Compiles NOTHING. Downloads the per-target binary + its `.sha256` sidecar and
@@ -107,13 +123,30 @@ RUN set -eux; \
       *) echo "prebuilt variant: unsupported TARGETARCH=${TARGETARCH:-<unset>}" >&2; exit 1 ;; \
     esac; \
     base="https://github.com/${KX_REPO}/releases/download/${KX_VERSION}"; \
-    curl -fsSL -o /tmp/kx        "${base}/kx-${triple}"; \
-    curl -fsSL -o /tmp/kx.sha256 "${base}/kx-${triple}.sha256"; \
-    printf '%s  /tmp/kx\n' "$(awk '{print $1}' /tmp/kx.sha256)" | sha256sum -c -; \
+    curl -fsSL -o /tmp/kx "${base}/kx-${triple}"; \
+    : "The publish job folds every per-asset .sha256 into checksums.txt and DELETES"; \
+    : "the sidecars, so fetching kx-<triple>.sha256 requests an asset that is not"; \
+    : "there. checksums.txt is the published artefact — read the row out of it."; \
+    curl -fsSL -o /tmp/checksums.txt "${base}/checksums.txt"; \
+    row="$(awk -v f="kx-${triple}" '$2 == f || $2 == "*"f {print $1}' /tmp/checksums.txt)"; \
+    test -n "$row" || { echo "no checksums.txt row for kx-${triple}" >&2; exit 1; }; \
+    printf '%s  /tmp/kx\n' "$row" | sha256sum -c -; \
     install -m 0755 /tmp/kx /usr/local/bin/kx; \
     mkdir -p /usr/local/libexec/kx; \
-    : "the prebuilt Release ships only kx — no sandbox demo body; the .keep marker"; \
-    : "keeps the libexec dir COPY-able. exec-demo is then gracefully not provisioned."; \
+    : "The runtime's own tools ship as a kx-tools tarball beside kx. A tag published"; \
+    : "BEFORE that bundle existed has no such row — carry on without it (the agent"; \
+    : "verb then form-gates with a message naming what is missing), but a row that IS"; \
+    : "present and does not verify is a HARD failure: that is a corrupt download."; \
+    tools="kx-tools-${triple}.tar.gz"; \
+    trow="$(awk -v f="$tools" '$2 == f || $2 == "*"f {print $1}' /tmp/checksums.txt)"; \
+    if [ -n "$trow" ]; then \
+      curl -fsSL -o "/tmp/$tools" "${base}/${tools}"; \
+      printf '%s  /tmp/%s\n' "$trow" "$tools" | sha256sum -c -; \
+      tar -xzf "/tmp/$tools" -C /usr/local/libexec/kx; \
+    else \
+      echo "note: ${KX_VERSION} predates the kx-tools bundle — the agent verb will be unavailable" >&2; \
+    fi; \
+    : "the .keep marker keeps the libexec dir COPY-able even when it is otherwise empty"; \
     touch /usr/local/libexec/kx/.keep
 
 # ---- kx-bin: the selected source of the `kx` binary ------------------------
@@ -155,7 +188,19 @@ RUN groupadd --gid 10001 kx \
 COPY --from=kx-bin /usr/local/bin/kx /usr/local/bin/kx
 # PR-9b: the sandbox demo body (present in the from-source image; the prebuilt fast
 # image carries only a `.keep` marker, so `exec-demo` is gracefully not provisioned).
+# This directory also carries the runtime's own tool binaries.
 COPY --from=kx-bin /usr/local/libexec/kx/ /usr/local/libexec/kx/
+# The bundled stdio tools resolve through libexec, but the CONNECTORS resolve as
+# siblings of `kx` or on PATH — so place any that shipped beside the binary. Tolerant
+# by design: a prebuilt image built from a tag that predates the tools bundle has none,
+# and must still build (the agent verb then form-gates and says what is missing).
+RUN set -eu; \
+    for b in kx-mcp-echo kx-mcp-calc kx-mcp-kv \
+             kx-connector-gmail kx-connector-discord kx-connector-slack kx-connector-notion; do \
+      if [ -f "/usr/local/libexec/kx/$b" ]; then \
+        install -m 0755 "/usr/local/libexec/kx/$b" "/usr/local/bin/$b"; \
+      fi; \
+    done
 
 # Convention defaults. NOTE: `kx serve` reads FLAGS, not env — these are
 # documentation + compose-interpolation only (the compose passes explicit flags).

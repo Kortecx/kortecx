@@ -52,3 +52,35 @@ describe("toRfEdge", () => {
     expect(toRfEdge(dataEdge, { branch: true }).className).toContain("dag-edge--branch");
   });
 });
+
+describe("toRfEdge — a DERIVED edge", () => {
+  const base = {
+    id: "a~>b",
+    source: "a",
+    target: "b",
+    edgeKind: "control" as const,
+    nonCascade: false,
+  };
+
+  it("is finely dotted, class-marked, and carries an OPEN arrow head", () => {
+    // Three non-colour signals, because a synthesised link must never be mistakable for
+    // a recorded parent — and colour alone would fail the dual-theme bar anyway.
+    const e = toRfEdge({ ...base, derived: true });
+    expect(e.className).toContain("dag-edge--derived");
+    expect(e.style?.strokeDasharray).toBe("2 5");
+    expect(e.markerEnd).toMatchObject({ type: "arrow" });
+    expect(e.data?.derived).toBe(true);
+  });
+
+  it("leaves the durable path untouched — no derived class, closed head", () => {
+    const e = toRfEdge({ ...base, edgeKind: "data" });
+    expect(e.className).not.toContain("dag-edge--derived");
+    expect(e.style?.strokeDasharray).toBeUndefined();
+    expect(e.markerEnd).toMatchObject({ type: "arrowclosed" });
+    expect(e.data?.derived).toBe(false);
+  });
+
+  it("a durable CONTROL edge keeps its own dash, distinct from a derived one", () => {
+    expect(toRfEdge({ ...base }).style?.strokeDasharray).toBe("5 4");
+  });
+});

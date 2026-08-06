@@ -594,6 +594,19 @@ button:disabled {
 .dag-edge--noncascade {
   stroke-dasharray: 5 4;
 }
+/* A reader-SYNTHESISED edge (an agent's turn order — the runtime records no parent
+ * between turns). Deliberately reuses the audited control-edge stroke rather than
+ * introducing a hue: the signals that separate it are the FINE dot pattern (2 5, vs
+ * the control dash 5 4), an open arrow head, and the canvas legend — never colour
+ * alone, and nothing new for the dual-theme contrast audit to cover. */
+.dag-edge--derived {
+  stroke: var(--fg-muted);
+  stroke-dasharray: 2 5;
+}
+.dag-legend {
+  margin: 0.5rem 0 0;
+  font-size: 0.78rem;
+}
 /* PR-B: the swarm branch→gather fan-in reads at a glance (accent stroke). */
 .dag-edge--branch {
   stroke: var(--accent);

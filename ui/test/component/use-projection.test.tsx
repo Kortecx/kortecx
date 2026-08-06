@@ -10,7 +10,17 @@ import {
 } from "../../src/kx/use-projection";
 import { connectedWrapper } from "../mocks/harness";
 import { makeMockClient } from "../mocks/kx-client";
-import { mote, projection } from "../mocks/projection-fixtures";
+import {
+  ANSWER_REF,
+  REACT_LAUNCH,
+  REACT_SEED,
+  mote,
+  obsId,
+  projection,
+  reactChainProjection,
+  reactTurnRows,
+  turnId,
+} from "../mocks/projection-fixtures";
 
 const INSTANCE = "ab".repeat(16);
 const TERMINAL = "ee".repeat(32);
@@ -290,5 +300,237 @@ describe("useProjection", () => {
     expect(result.current.data?.motes[0]?.stateCode).toBe(3);
     // Content changed → structural sharing yields a fresh reference.
     expect(result.current.data).not.toBe(first);
+  });
+});
+
+describe("useProjection — agentic lineage", () => {
+  // A react/agentic run folds as DISJOINT TWO-NODE STARS: the coordinator registers each
+  // turn Mote EDGE-FREE (declaring parents would move the canonical digest) and only the
+  // tool observation carries a Data edge, back to its own turn. So an undirected walk from
+  // any anchor reaches exactly one star, and the graph has never shown more than that.
+  // The lineage IS durable — it is just off-DAG, in the ReactRound facts ListReactTurns
+  // serves. These tests pin that the reader joins the two.
+
+  it("kx agent run: scopes the WHOLE chain, not just turn 0", async () => {
+    // `?chain=` is the react chain salt = the seed the coordinator validates then DISCARDS,
+    // so the primary anchor ALWAYS misses and the `terminal` fallback (the admitted turn-0)
+    // is what resolves. Today that yields turn 0's star and nothing else.
+    const { client, listReactTurns } = makeMockClient({
+      getProjection: async () => reactChainProjection({ turns: 3 }),
+      listReactTurns: async () => reactTurnRows({ turns: 3, stepSalt: REACT_SEED }),
+    });
+    const { result } = renderHook(
+      () => useProjection(INSTANCE, { scopeMoteId: REACT_SEED, scopeFallbackMoteId: turnId(0) }),
+      { wrapper: connectedWrapper(client) },
+    );
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+    expect(result.current.data?.motes.map((m) => m.moteId)).toEqual([
+      turnId(0),
+      obsId(0),
+      turnId(1),
+      obsId(1),
+      turnId(2),
+    ]);
+    expect(result.current.data?.scopeMissed).toBe(false);
+    // Requested WITHOUT a chain key and selected by membership — see the
+    // "the shape a real `kx agent run` actually produces" block below for why.
+    expect(listReactTurns).toHaveBeenCalledWith({ instanceId: INSTANCE, limit: 500 });
+  });
+
+  it("kx chat --tools: the answer turn is ABSORBED by the launch, so its bytes render once", async () => {
+    // Here the salt IS an admitted Mote (the agentic launch step), and the loop's answer
+    // commits ONTO it. Rendering the answer turn as well would show the same bytes twice.
+    const { client } = makeMockClient({
+      getProjection: async () => reactChainProjection({ turns: 3, launch: true }),
+      listReactTurns: async () => reactTurnRows({ turns: 3, stepSalt: REACT_LAUNCH }),
+    });
+    const { result } = renderHook(() => useProjection(INSTANCE, { scopeMoteId: REACT_LAUNCH }), {
+      wrapper: connectedWrapper(client),
+    });
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+    const ids = result.current.data?.motes.map((m) => m.moteId) ?? [];
+    expect(ids).toContain(REACT_LAUNCH);
+    expect(ids).toContain(turnId(0));
+    expect(ids).toContain(obsId(0));
+    // The answer turn's Mote is NOT a node — the launch already carries its bytes.
+    expect(ids).not.toContain(turnId(2));
+    expect(result.current.data?.motes.filter((m) => m.resultRef === ANSWER_REF)).toHaveLength(1);
+    // The roster still ends at the launch, so the chain has somewhere to terminate.
+    expect(result.current.data?.agenticTurnIds?.at(-1)).toBe(REACT_LAUNCH);
+  });
+
+  it("a turn whose Mote has not reached the frontier is DROPPED, never faked", async () => {
+    // Mid-poll: three turn rows exist but only two turn Motes have landed. A placeholder
+    // would have to invent a state code, and stateCode 0 renders UNKNOWN — a lie about a
+    // Mote that is merely not in our copy of the fold yet.
+    const { client } = makeMockClient({
+      getProjection: async () => reactChainProjection({ turns: 3, presentTurns: 2 }),
+      listReactTurns: async () => reactTurnRows({ turns: 3, stepSalt: REACT_SEED }),
+    });
+    const { result } = renderHook(
+      () => useProjection(INSTANCE, { scopeMoteId: REACT_SEED, scopeFallbackMoteId: turnId(0) }),
+      { wrapper: connectedWrapper(client) },
+    );
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+    const ids = result.current.data?.motes.map((m) => m.moteId) ?? [];
+    expect(ids).toEqual([turnId(0), obsId(0), turnId(1), obsId(1)]);
+    expect(ids).not.toContain(turnId(2));
+  });
+
+  it("does NOT call ListReactTurns when there is no scope anchor", async () => {
+    const { client, listReactTurns } = makeMockClient({
+      getProjection: async () => projection([mote({ stateCode: 3 })]),
+    });
+    const { result } = renderHook(() => useProjection(INSTANCE), {
+      wrapper: connectedWrapper(client),
+    });
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+    expect(listReactTurns).not.toHaveBeenCalled();
+  });
+
+  it("degrades to today's scope when ListReactTurns is unavailable", async () => {
+    // An older gateway answers UNIMPLEMENTED. That must narrow exactly as before — never
+    // fail the projection, which would blank a run view that used to render.
+    const { client } = makeMockClient({
+      getProjection: async () => reactChainProjection({ turns: 3 }),
+      listReactTurns: async () => {
+        throw new Error("UNIMPLEMENTED: ListReactTurns");
+      },
+    });
+    const { result } = renderHook(
+      () => useProjection(INSTANCE, { scopeMoteId: REACT_SEED, scopeFallbackMoteId: turnId(0) }),
+      { wrapper: connectedWrapper(client) },
+    );
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+    expect(result.current.error).toBeFalsy();
+    expect(result.current.data?.motes.map((m) => m.moteId)).toEqual([turnId(0), obsId(0)]);
+    expect(result.current.data?.scopeMissed).toBe(false);
+  });
+
+  it("rows whose Motes are ALL absent do not clear scopeMissed", async () => {
+    // The honest-degrade path must survive the widening: if neither URL anchor nor any
+    // turn Mote is in the fold, the view must still say it could not isolate the run.
+    const { client } = makeMockClient({
+      getProjection: async () => projection([mote({ moteId: "cc".repeat(32), stateCode: 3 })]),
+      listReactTurns: async () => reactTurnRows({ turns: 3, stepSalt: REACT_SEED }),
+    });
+    const { result } = renderHook(
+      () => useProjection(INSTANCE, { scopeMoteId: REACT_SEED, scopeFallbackMoteId: turnId(0) }),
+      { wrapper: connectedWrapper(client) },
+    );
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+    expect(result.current.data?.scopeMissed).toBe(true);
+  });
+
+  it("a GROWING roster stays one cache entry (no refetch storm)", async () => {
+    // The roster is derived INSIDE the query fn precisely so it cannot enter the query
+    // key. If it did, every arriving turn would mint a new cache entry and flash loading.
+    const frames = [reactTurnRows({ turns: 2 }), reactTurnRows({ turns: 4 })];
+    let i = 0;
+    const { client } = makeMockClient({
+      getProjection: async () => reactChainProjection({ turns: 4 }),
+      listReactTurns: async () => frames[Math.min(i++, frames.length - 1)],
+    });
+    const { result } = renderHook(
+      () => useProjection(INSTANCE, { scopeMoteId: REACT_SEED, scopeFallbackMoteId: turnId(0) }),
+      { wrapper: connectedWrapper(client) },
+    );
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+    expect(result.current.data?.motes.map((m) => m.moteId)).toEqual([
+      turnId(0),
+      obsId(0),
+      turnId(1),
+      obsId(1),
+    ]);
+    await act(async () => {
+      await result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.data?.motes.length).toBe(7));
+    expect(result.current.isLoading).toBe(false);
+  });
+});
+
+describe("useProjection — the shape a real `kx agent run` actually produces", () => {
+  /**
+   * ⚠ THE REGRESSION GUARD FOR A LIVE FINDING. The first implementation asked for the
+   * chain BY KEY, using the run view's `?chain=` as the key. That reads as obviously
+   * right and is wrong for the case this whole surface exists for: measured against a
+   * real `kx agent run` on a served model, every row of a 3-turn chain carried NO chain
+   * key at all, and `?chain=` was the turn-0 Mote. A keyed request matched nothing, and
+   * the graph stayed at the 2 nodes it had always shown — with `ListReactTurns` visibly
+   * being called, which is what made it look fixed.
+   *
+   * The unit suite could not see this, because the mock returned rows regardless of the
+   * request. These tests drive the mock from the REQUEST, so a lookup that cannot match
+   * comes back empty exactly as the server would answer it.
+   */
+  function unsaltedClient() {
+    const page = reactTurnRows({ turns: 3, stepSalt: "" });
+    return makeMockClient({
+      getProjection: async () => reactChainProjection({ turns: 3 }),
+      // Honour the filter, as the server does.
+      listReactTurns: async (req: unknown) => {
+        const salt = (req as { stepSalt?: string } | undefined)?.stepSalt;
+        if (salt) {
+          return { turns: [], hasMore: false }; // no row carries a key
+        }
+        return page;
+      },
+    });
+  }
+
+  it("scopes the whole chain when the anchor is the TURN-0 Mote and rows carry no key", async () => {
+    const { client } = unsaltedClient();
+    const { result } = renderHook(
+      // What `runViewSearch` emits for a run with no salt: chain === terminal === turn 0.
+      () => useProjection(INSTANCE, { scopeMoteId: turnId(0), scopeFallbackMoteId: turnId(0) }),
+      { wrapper: connectedWrapper(client) },
+    );
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+    expect(result.current.data?.motes.map((m) => m.moteId)).toEqual([
+      turnId(0),
+      obsId(0),
+      turnId(1),
+      obsId(1),
+      turnId(2),
+    ]);
+    expect(result.current.data?.agenticTurnIds).toEqual([turnId(0), turnId(1), turnId(2)]);
+  });
+
+  it("asks for the chain WITHOUT a key — a keyed request cannot match this shape", async () => {
+    const { client, listReactTurns } = unsaltedClient();
+    renderHook(() => useProjection(INSTANCE, { scopeMoteId: turnId(0) }), {
+      wrapper: connectedWrapper(client),
+    });
+    await waitFor(() => expect(listReactTurns).toHaveBeenCalled());
+    for (const call of listReactTurns.mock.calls) {
+      expect((call[0] as { stepSalt?: string })?.stepSalt).toBeUndefined();
+    }
+  });
+
+  it("selects by MEMBERSHIP, so another run's chain is never adopted", async () => {
+    // Two unsalted chains under one instance. The anchor belongs to the second; the
+    // first must not contribute a single node.
+    const mine = reactTurnRows({ turns: 3, stepSalt: "" });
+    const foreign = {
+      turns: mine.turns.map(
+        (t) => ({ ...t, turnMoteId: `ff${t.turnMoteId.slice(2)}`, seq: t.seq - 100 }) as typeof t,
+      ),
+      hasMore: false as const,
+    };
+    const { client } = makeMockClient({
+      getProjection: async () => reactChainProjection({ turns: 3 }),
+      listReactTurns: async () => ({
+        turns: [...mine.turns, ...foreign.turns],
+        hasMore: false,
+      }),
+    });
+    const { result } = renderHook(
+      () => useProjection(INSTANCE, { scopeMoteId: turnId(0), scopeFallbackMoteId: turnId(0) }),
+      { wrapper: connectedWrapper(client) },
+    );
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+    expect(result.current.data?.agenticTurnIds).toEqual([turnId(0), turnId(1), turnId(2)]);
+    expect(result.current.data?.motes.every((m) => !m.moteId.startsWith("ff"))).toBe(true);
   });
 });
