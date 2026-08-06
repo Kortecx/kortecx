@@ -20,9 +20,10 @@ use crate::connection::{
 use crate::errors::GatewayError;
 
 /// The connections sidecar schema version (LE-u16). PR-6b-3 bumped it 1 → 2 to add
-/// the `session_mode` column; the migration is FORWARD + lossless (an idempotent
-/// `ALTER TABLE ADD COLUMN` preserves every existing row), never a silent wipe.
-const CONNECTIONS_SCHEMA_VERSION: u16 = 2;
+/// the `session_mode` column; 2 → 3 adds `env_json`, the by-reference environment map.
+/// Every migration is FORWARD + lossless (an idempotent `ALTER TABLE ADD COLUMN`
+/// preserves every existing row), never a silent wipe.
+const CONNECTIONS_SCHEMA_VERSION: u16 = 3;
 
 const DDL: &str = "CREATE TABLE IF NOT EXISTS connections (
     name           TEXT PRIMARY KEY,
@@ -34,7 +35,8 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS connections (
     credential_ref TEXT,
     health         TEXT NOT NULL DEFAULT 'unknown',
     tool_count     INTEGER NOT NULL DEFAULT 0,
-    session_mode   TEXT NOT NULL DEFAULT 'stateless'
+    session_mode   TEXT NOT NULL DEFAULT 'stateless',
+    env_json       TEXT NOT NULL DEFAULT '[]'
 );";
 
 /// A durable SQLite store of registered external MCP server connections.
@@ -113,10 +115,18 @@ impl SqliteConnectionStore {
                 "connections.db schema_version {found} is newer than this binary supports ({CONNECTIONS_SCHEMA_VERSION}) — refusing a lossy downgrade"
             )));
         }
-        // PR-6b-3 v1 → v2: add `session_mode` (idempotent — a no-op on a fresh v2
-        // table the DDL already created, and on re-open). Existing rows survive,
-        // defaulting to the stateless-first posture.
-        ensure_session_mode_column(&conn)?;
+        // Forward migrations, each idempotent — a no-op on a table the DDL already created
+        // and on every re-open. Applied unconditionally rather than keyed on `found`, so a
+        // sidecar that was written by a build between two versions converges either way.
+        // v1 → v2: `session_mode`, existing rows defaulting to the stateless-first posture.
+        // v2 → v3: `env_json`, existing rows defaulting to an EMPTY map — a connection that
+        // predates the map declared no environment, which is exactly what `[]` means.
+        ensure_column(
+            &conn,
+            "session_mode",
+            "session_mode TEXT NOT NULL DEFAULT 'stateless'",
+        )?;
+        ensure_column(&conn, "env_json", "env_json TEXT NOT NULL DEFAULT '[]'")?;
         if found < CONNECTIONS_SCHEMA_VERSION {
             conn.execute(
                 "UPDATE metadata SET value = ?1 WHERE key = 'schema_version'",
@@ -136,11 +146,12 @@ impl SqliteConnectionStore {
     /// [`GatewayError::Storage`] on a durable-write failure.
     pub fn upsert(&self, conn: &Connection) -> Result<(), GatewayError> {
         let (kind, endpoint, args_json, tls) = encode_transport(&conn.transport)?;
+        let env_json = encode_env(&conn.env)?;
         let db = self.conn.lock().map_err(|_| poisoned())?;
         db.execute(
             "INSERT OR REPLACE INTO connections
-             (name, connection_id, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count, session_mode)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             (name, connection_id, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count, session_mode, env_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 conn.name,
                 &conn.id[..],
@@ -152,6 +163,7 @@ impl SqliteConnectionStore {
                 conn.health.tag(),
                 conn.tool_count,
                 conn.session_mode.tag(),
+                env_json,
             ],
         )
         .map_err(storage)?;
@@ -185,7 +197,7 @@ impl SqliteConnectionStore {
         let db = self.conn.lock().map_err(|_| poisoned())?;
         let raw = db
             .query_row(
-                "SELECT name, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count, session_mode
+                "SELECT name, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count, session_mode, env_json
                  FROM connections WHERE name = ?1",
                 params![name],
                 read_raw,
@@ -206,7 +218,7 @@ impl SqliteConnectionStore {
         let db = self.conn.lock().map_err(|_| poisoned())?;
         let mut stmt = db
             .prepare(
-                "SELECT name, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count, session_mode
+                "SELECT name, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count, session_mode, env_json
                  FROM connections ORDER BY name ASC",
             )
             .map_err(storage)?;
@@ -247,6 +259,22 @@ fn encode_transport(
     }
 }
 
+/// Encode the by-reference environment map into its stored column.
+///
+/// Stored as a JSON array of `[name, credential_ref]` PAIRS rather than an object, so
+/// declaration order round-trips and a duplicate name is preserved for the validator to
+/// reject rather than silently collapsed by a map.
+fn encode_env(env: &[(String, String)]) -> Result<String, GatewayError> {
+    serde_json::to_string(env).map_err(|e| GatewayError::Storage(format!("encode env: {e}")))
+}
+
+/// Decode the stored environment map. Fail-closed: a malformed `env_json` refuses the read
+/// rather than dialing a server with a SILENTLY EMPTY environment, which would present as
+/// the connector's own auth failure and point an operator at the wrong system entirely.
+fn decode_env(raw: &str) -> Result<Vec<(String, String)>, GatewayError> {
+    serde_json::from_str(raw).map_err(|e| GatewayError::Storage(format!("decode env: {e}")))
+}
+
 /// The raw, undecoded column tuple read from a row (rusqlite layer only).
 struct RawRow {
     name: String,
@@ -258,6 +286,7 @@ struct RawRow {
     health: String,
     tool_count: u32,
     session_mode: String,
+    env_json: String,
 }
 
 /// Read a row into [`RawRow`] (pure rusqlite — no `GatewayError` here).
@@ -273,14 +302,17 @@ fn read_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawRow> {
         health: row.get(6)?,
         tool_count: row.get(7)?,
         session_mode: row.get(8)?,
+        env_json: row.get(9)?,
     })
 }
 
-/// PR-6b-3: idempotently add the `session_mode` column to an existing v1
-/// `connections` table (SQLite has no `ADD COLUMN IF NOT EXISTS`, so guard via
-/// `PRAGMA table_info`). A no-op on a fresh v2 table (the DDL already has it) and
-/// on every re-open — existing rows survive, defaulting to `'stateless'`.
-fn ensure_session_mode_column(conn: &SqliteConn) -> Result<(), GatewayError> {
+/// Idempotently add a column to an existing `connections` table (SQLite has no
+/// `ADD COLUMN IF NOT EXISTS`, so guard via `PRAGMA table_info`). A no-op when the DDL
+/// already created it and on every re-open — existing rows survive, taking `default_sql`.
+///
+/// `column_sql` is a trusted literal from this module, never operator input: SQLite cannot
+/// bind an identifier in DDL, so this must not become a path for anything else.
+fn ensure_column(conn: &SqliteConn, column: &str, column_sql: &str) -> Result<(), GatewayError> {
     let mut stmt = conn
         .prepare("PRAGMA table_info(connections)")
         .map_err(storage)?;
@@ -290,12 +322,10 @@ fn ensure_session_mode_column(conn: &SqliteConn) -> Result<(), GatewayError> {
         .collect::<Result<Vec<String>, _>>()
         .map_err(storage)?
         .iter()
-        .any(|name| name == "session_mode");
+        .any(|name| name == column);
     if !has_column {
-        conn.execute_batch(
-            "ALTER TABLE connections ADD COLUMN session_mode TEXT NOT NULL DEFAULT 'stateless';",
-        )
-        .map_err(storage)?;
+        conn.execute_batch(&format!("ALTER TABLE connections ADD COLUMN {column_sql};"))
+            .map_err(storage)?;
     }
     Ok(())
 }
@@ -322,11 +352,13 @@ fn decode_raw(raw: RawRow) -> Result<Connection, GatewayError> {
             )))
         }
     };
+    let env = decode_env(&raw.env_json)?;
     Ok(Connection {
         id: connection_id_of(&raw.name),
         name: raw.name,
         transport,
         credential_ref: raw.credential_ref,
+        env,
         health: ConnectionHealth::from_tag(&raw.health),
         tool_count: raw.tool_count,
         session_mode: SessionMode::from_tag(&raw.session_mode),
@@ -354,6 +386,7 @@ mod tests {
                 tls_required: true,
             },
             credential_ref: Some("MCP_TOKEN".to_string()),
+            env: Vec::new(),
             health: ConnectionHealth::Connected,
             tool_count: 3,
             session_mode: SessionMode::Stateless,
@@ -375,6 +408,7 @@ mod tests {
                     args: vec!["--stdio".into(), "-v".into()],
                 },
                 credential_ref: None,
+                env: Vec::new(),
                 health: ConnectionHealth::Unknown,
                 tool_count: 0,
                 session_mode: SessionMode::Stateful,

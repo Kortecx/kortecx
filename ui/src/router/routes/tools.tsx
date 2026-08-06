@@ -9,25 +9,20 @@ const ToolsSection = lazy(() =>
   import("../../components/sections/ToolsSection").then((m) => ({ default: m.ToolsSection })),
 );
 
-/** The MCP tabs: tools (default, absent), scripts, integrations, connections, skills, triggers, secrets. */
-export type ToolsTab =
-  | "tools"
-  | "scripts"
-  | "integrations"
-  | "connections"
-  | "skills"
-  | "triggers"
-  | "secrets";
+/** The MCP tabs: tools (default, absent), scripts, connectors, skills, triggers, secrets. */
+export type ToolsTab = "tools" | "scripts" | "connectors" | "skills" | "triggers" | "secrets";
 /** The non-default tabs carried in the route search (`tools` is the absent default). */
 type ToolsTabSearch = Exclude<ToolsTab, "tools">;
 const TAB_SEARCH: readonly ToolsTabSearch[] = [
   "scripts",
-  "integrations",
-  "connections",
+  "connectors",
   "skills",
   "triggers",
   "secrets",
 ];
+/** Links to the two tabs that merged into Connectors still resolve, rather than silently
+ *  dropping to the default tab — a bookmark is not a reason to lose someone's place. */
+const MERGED_INTO_CONNECTORS: readonly string[] = ["integrations", "connections"];
 interface ToolsSearch {
   /** The active tab; absent = the Tools tab. */
   tab?: ToolsTabSearch;
@@ -54,6 +49,11 @@ export const toolsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/tools",
   component: ToolsScreen,
-  validateSearch: (search: Record<string, unknown>): ToolsSearch =>
-    TAB_SEARCH.includes(search.tab as ToolsTabSearch) ? { tab: search.tab as ToolsTabSearch } : {},
+  validateSearch: (search: Record<string, unknown>): ToolsSearch => {
+    const tab = search.tab as ToolsTabSearch;
+    if (TAB_SEARCH.includes(tab)) {
+      return { tab };
+    }
+    return MERGED_INTO_CONNECTORS.includes(search.tab as string) ? { tab: "connectors" } : {};
+  },
 });

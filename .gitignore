@@ -135,3 +135,10 @@ bindings/typescript/kortecx-sdk.tgz
 crates/kx-runtime/tests/fixtures/state-dirs/**/*.db-wal
 crates/kx-runtime/tests/fixtures/state-dirs/**/*.db-shm
 crates/kx-runtime/tests/fixtures/state-dirs/**/*.db-journal
+
+# Node dependency and cache trees, at ANY depth. The per-package ignores covered
+# `ui/`, `bindings/typescript/` and `docs/site/`, but nothing covered the repository
+# ROOT — so a test runner invoked from the root rather than from `ui/` created a
+# top-level `node_modules/` whose vitest cache was tracked, and committed.
+node_modules/
+.vite/

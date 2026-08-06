@@ -229,6 +229,9 @@ class McpServer:
     tool_count: int
     credential_ref_present: bool
     session_mode: str  # PR-6b-3: "stateful" | "stateless" (firing posture)
+    # The environment variable NAMES this server is configured with — names only,
+    # never the refs behind them and never the values.
+    env_names: tuple[str, ...] = ()
 
     @classmethod
     def from_proto(cls, s: "_g.McpServer") -> "McpServer":
@@ -241,6 +244,7 @@ class McpServer:
             tool_count=s.tool_count,
             credential_ref_present=s.credential_ref_present,
             session_mode=s.session_mode,
+            env_names=tuple(s.env_names),
         )
 
 

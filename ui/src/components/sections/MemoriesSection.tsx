@@ -29,8 +29,8 @@ function snippet(text: string, max = 120): string {
 function NotWired() {
   return (
     <p className="notice notice--warn" data-testid="memories-not-wired">
-      Memory is not enabled on this gateway. Run <code>kx serve --features inference,hnsw</code>{" "}
-      with a model and <code>KX_SERVE_MEMORY=1</code> to remember and recall facts across runs.
+      Memory is not enabled on this gateway. Restart it with a model and{" "}
+      <code>KX_SERVE_MEMORY=1</code> to remember and recall facts across runs.
     </p>
   );
 }

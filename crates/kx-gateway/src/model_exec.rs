@@ -924,7 +924,7 @@ fn parse_judge_verdict(bytes: &[u8]) -> kx_critic::CriticVerdict {
 
 /// Resolve the serve model GGUF: the `KX_SERVE_MODEL_GGUF` env path, iff it
 /// exists. `None` ⇒ no model serving (the model recipe is not provisioned), so
-/// `kx serve --features inference` still runs the durable spine + demo recipes.
+/// `kx serve` on an inference build still runs the durable spine + demo recipes.
 #[cfg(feature = "inference")]
 pub(crate) fn resolve_serve_model() -> Option<std::path::PathBuf> {
     let p = std::path::PathBuf::from(std::env::var_os("KX_SERVE_MODEL_GGUF")?);
@@ -2353,7 +2353,7 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
                 return Err(internal(&format!(
                     "model Mote {:?} routes to an unserved model {:?} — refusing to fall \
                      back to the demo executor (fail-closed). Check the step warrant's \
-                     model_route and that `kx serve --features inference` serves it.",
+                     model_route and that a serve built with inference serves it.",
                     mote.id, mote.def.model_id
                 )));
             }

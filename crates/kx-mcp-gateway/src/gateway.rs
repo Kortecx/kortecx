@@ -153,6 +153,7 @@ impl McpGateway {
         name: &str,
         transport: TransportSpec,
         credential_ref: Option<String>,
+        env: Vec<(String, String)>,
         session_mode: SessionMode,
     ) -> Result<RegisterOutcome, GatewayError> {
         let name = name.trim();
@@ -166,6 +167,7 @@ impl McpGateway {
                 "server name must not contain '/' (it namespaces tool ids)".to_string(),
             ));
         }
+        let env = validate_env(env, credential_ref.as_deref())?;
         // Admission host vetting for HTTP (deny-by-default; stdio has no egress).
         if let TransportSpec::Http { url, .. } = &transport {
             // Refuse credentials embedded in the URL userinfo (`user:pass@host`):
@@ -186,6 +188,7 @@ impl McpGateway {
                     tls_required: false,
                 },
                 credential_ref: None,
+                env: Vec::new(),
                 health: ConnectionHealth::Unknown,
                 tool_count: 0,
                 session_mode: SessionMode::Stateless,
@@ -200,6 +203,7 @@ impl McpGateway {
             name: name.to_string(),
             transport,
             credential_ref,
+            env,
             health: ConnectionHealth::Unknown,
             tool_count: 0,
             session_mode,
@@ -496,6 +500,63 @@ fn dial_error_of_session(e: &kx_mcp::SessionError) -> GatewayError {
     }
 }
 
+/// Validate the by-reference environment map at admission, trimming both halves.
+///
+/// Refuses, rather than accepting-and-surprising:
+/// - an empty variable name, or one carrying `=` or NUL (unrepresentable in a child env);
+/// - an empty credential ref — a variable declared with nothing to resolve it would spawn
+///   the child WITHOUT it, and the server's own auth error would then describe a secret the
+///   runtime never sent, pointing an operator at the wrong system (the same reasoning that
+///   makes `CredentialRef::try_inject_into`'s permissive form misleading);
+/// - a duplicate variable name, INCLUDING one colliding with the legacy `credential_ref`
+///   (which injects under its own name) — silently letting the last writer win would make
+///   which secret reached the server depend on declaration order.
+///
+/// A VALUE is never accepted here: the right-hand side is a ref name. That is what keeps a
+/// registered connection free of secrets at rest.
+fn validate_env(
+    env: Vec<(String, String)>,
+    credential_ref: Option<&str>,
+) -> Result<Vec<(String, String)>, GatewayError> {
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // The legacy single credential lands under its OWN name, so it occupies that slot.
+    if let Some(c) = credential_ref.map(str::trim).filter(|c| !c.is_empty()) {
+        seen.insert(c.to_string());
+    }
+    let mut out = Vec::with_capacity(env.len());
+    for (name, secret_ref) in env {
+        let name = name.trim().to_string();
+        let secret_ref = secret_ref.trim().to_string();
+        if name.is_empty() {
+            return Err(GatewayError::InvalidSpec(
+                "env entry has an empty variable name".to_string(),
+            ));
+        }
+        if name.contains('=') || name.contains('\0') {
+            return Err(GatewayError::InvalidSpec(format!(
+                "env variable name {name:?} must not contain '=' or NUL"
+            )));
+        }
+        if secret_ref.is_empty() {
+            return Err(GatewayError::InvalidSpec(format!(
+                "env variable {name:?} has no credential ref — supply the NAME of a stored secret, never its value"
+            )));
+        }
+        if secret_ref.contains('\0') {
+            return Err(GatewayError::InvalidSpec(format!(
+                "credential ref for {name:?} must not contain NUL"
+            )));
+        }
+        if !seen.insert(name.clone()) {
+            return Err(GatewayError::InvalidSpec(format!(
+                "env variable {name:?} is declared twice"
+            )));
+        }
+        out.push((name, secret_ref));
+    }
+    Ok(out)
+}
+
 /// Build a `kx-mcp` transport from a connection's spec + optional credential.
 ///
 /// `secret_store` is the host-injected resolver (the store-then-env chain by
@@ -514,9 +575,18 @@ fn build_transport(
                 t = t.arg(a.as_str());
             }
             if let Some(secret_ref) = &conn.credential_ref {
-                t = t
-                    .credential(kx_mcp::CredentialRef::from_env_var(secret_ref.clone()))
-                    .with_secret_store(secret_store.clone());
+                t = t.credential(kx_mcp::CredentialRef::from_env_var(secret_ref.clone()));
+            }
+            // Each map entry names the variable the SERVER reads and the ref that supplies
+            // it; `validate_env` has already refused a collision with the line above.
+            for (var_name, secret_ref) in &conn.env {
+                t = t.credential_as(
+                    var_name.as_str(),
+                    kx_mcp::CredentialRef::from_env_var(secret_ref.clone()),
+                );
+            }
+            if conn.credential_ref.is_some() || !conn.env.is_empty() {
+                t = t.with_secret_store(secret_store.clone());
             }
             Ok(Box::new(t))
         }

@@ -44,6 +44,14 @@ name = "kx-proto"
 # gains a field => breaking-in-Rust, minor. No journal SHAPE moves (v18 already has the
 # field) and the product identity digest is invariant: a `Failed` entry is not an
 # identity input.
+# 0.19.0 -> 0.20.0: the CONNECTOR ENVIRONMENT MAP — a new `McpEnvEntry` message, plus
+# `RegisterMcpServerRequest.env` and `McpServer.env_names`. A stdio server could previously
+# receive exactly one environment variable and its NAME was forced to be the credential
+# ref's name, so a server needing two was unconfigurable. Both halves of an entry are NAMES
+# (the variable, and the ref that supplies it) — no secret value crosses the wire, and
+# `env_names` publishes the variables only, never the refs behind them. A prost struct
+# gaining a field is breaking-in-Rust => minor. No journal shape and no digest input moves:
+# connections live in an off-journal, rebuildable sidecar.
 # 0.18.0 -> 0.19.0: the `OffloadModel` IN-USE GUARD — `OffloadModelRequest.force`, plus
 # `OffloadModelResponse.{in_use_by, refused, usage_checked}` and the new `ModelHolder`
 # message / `ModelHolderKind` enum. Offloading destroys a model, so live work bound to it
@@ -55,7 +63,7 @@ name = "kx-proto"
 # is the SAFE arm), but exhaustive struct literals in Rust give every construction site a
 # field => breaking-in-Rust, minor. Off-journal, off-digest: RAM residency is ephemeral
 # state that rebuilds empty on restart and has never been an identity input.
-version = "0.19.0"
+version = "0.20.0"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = { workspace = true }

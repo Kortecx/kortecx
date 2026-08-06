@@ -1,4 +1,4 @@
-//! PR-2d-2 e2e witness: `kx serve --features inference` drives a LIVE `ReAct`
+//! PR-2d-2 e2e witness: `kx serve` on an inference build drives a LIVE `ReAct`
 //! chain end-to-end through the real serve stack.
 //!
 //! `Invoke` the server-provisioned `kx/recipes/react` recipe by handle+args

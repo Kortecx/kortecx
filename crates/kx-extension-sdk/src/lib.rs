@@ -93,6 +93,9 @@
 //!     name: "example".into(),
 //!     transport: TransportSpec::Stdio { command: "./kx-connector-example".into(), args: vec![] },
 //!     credential_ref: None,
+//!     // (child variable NAME, stored secret NAME) — never a secret value. A connector
+//!     // configured entirely through its environment names each variable it reads here.
+//!     env: vec![],
 //!     session_mode: SessionMode::Stateless,
 //! };
 //! let report = run_conformance(&cut);

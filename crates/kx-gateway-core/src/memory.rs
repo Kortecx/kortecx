@@ -338,7 +338,7 @@ pub(crate) fn memory_status(err: MemoryError) -> Status {
         }
         MemoryError::EmbedderUnavailable => Status::failed_precondition(
             "no embedding model wired: provide a vector client-side, or run \
-             `kx serve --features inference,hnsw` with a model",
+             `kx serve` on a build with inference and hnsw, with a model",
         ),
         MemoryError::StaleIndex(detail) => Status::failed_precondition(detail),
         MemoryError::Internal(detail) => Status::internal(detail),

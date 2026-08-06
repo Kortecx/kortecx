@@ -75,7 +75,17 @@ pub struct ToolProposal {
     pub remote_name: String,
 }
 
-/// A proposed MCP connector registration. Mirrors `RegisterMcpServerRequest`.
+/// A proposed MCP connector registration. Mirrors `RegisterMcpServerRequest` MINUS its
+/// environment map.
+///
+/// ⚠ The missing field is the design. A `ControlPreview` is displayed, logged and forwarded,
+/// so anything it can express is disclosed by design — and an environment map is
+/// execution-shaped: it decides what a child process is configured with. A model does not
+/// author that; an operator supplies it afterwards through the form or
+/// `kx connections add --env`. Because the field does not EXIST here, the lowering cannot
+/// emit one — the same structural reduction [`ScriptProposal`] uses for argv/env, and the
+/// reason `kx-proto`'s `no_credential_or_argv_field_is_reachable_from_control_preview`
+/// refuses `RegisterMcpServerRequest` as a preview arm.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ConnectorProposal {
     /// Unique handle; namespaces discovered tool ids.
@@ -315,7 +325,45 @@ pub trait ControlProposer: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlProposal, ScriptProposal, SecretProposal};
+    use super::{ConnectorProposal, ControlProposal, ScriptProposal, SecretProposal};
+
+    /// A connector proposal has no environment map to lose, and that is the assertion.
+    ///
+    /// The sibling below tests the same property for scripts. This one exists because a
+    /// connector's `env` arrived LATER than the guard that forbids it: `RegisterMcpServerRequest`
+    /// gained the map for the RPC, and because that message was also a `ControlPreview` arm the
+    /// field became reachable from a proposal — which `kx-proto`'s descriptor walk refused. The
+    /// fix was the reduced `ProposedConnector` arm, and this pins the gateway-core half: if
+    /// `ConnectorProposal` ever grows an `env` field, this stops COMPILING before it stops
+    /// passing, the same way the script test does.
+    #[test]
+    fn a_connector_proposal_cannot_express_an_environment_map() {
+        let p = ConnectorProposal {
+            server_name: "gitlab".into(),
+            transport: "stdio".into(),
+            endpoint: "mcp-server-gitlab".into(),
+            credential_ref: "gitlab-token".into(),
+            ..ConnectorProposal::default()
+        };
+        // Every field the type HAS, exhaustively — so this fails to compile if one is added,
+        // rather than silently ignoring the new axis.
+        let ConnectorProposal {
+            server_name,
+            transport,
+            endpoint,
+            args,
+            tls_required,
+            credential_ref,
+            session_mode,
+        } = p;
+        assert_eq!(server_name, "gitlab");
+        assert_eq!(transport, "stdio");
+        assert_eq!(endpoint, "mcp-server-gitlab");
+        assert_eq!(credential_ref, "gitlab-token");
+        assert!(args.is_empty());
+        assert!(!tls_required);
+        assert!(session_mode.is_empty());
+    }
 
     /// The reduction is structural, so the lowering cannot produce argv/env.
     ///

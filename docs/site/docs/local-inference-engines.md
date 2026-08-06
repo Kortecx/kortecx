@@ -160,7 +160,7 @@ config, never client-chosen). The runtime flags a decoder-as-embedder honestly
 ```sh
 ollama pull gemma3:12b && ollama pull embeddinggemma
 KX_SERVE_EMBED_MODEL=embeddinggemma KX_SERVE_WARM_EMBED=1 \
-  kx serve --dev-allow-local --features hnsw
+  kx serve --dev-allow-local
 kx info        # shows: embed  embeddinggemma (datasets/RAG)   [no decoder warning]
 kx models list # the embed model carries an (embed) marker
 ```
@@ -201,7 +201,7 @@ kx chat --image ./receipt.png "Transcribe all the text in this image."   # OCR
 kx chat --image ./cat.png     "What is in this picture?"                  # describe
 
 # llama.cpp
-KX_SERVE_MMPROJ_GGUF=./gemma-4-mmproj.gguf kx serve --features inference --dev-allow-local
+KX_SERVE_MMPROJ_GGUF=./gemma-4-mmproj.gguf kx serve --dev-allow-local
 kx chat --image ./cat.png "What is in this picture?"
 ```
 

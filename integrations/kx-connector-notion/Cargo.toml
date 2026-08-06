@@ -30,7 +30,7 @@ thiserror  = { workspace = true }
 
 [dev-dependencies]
 # The conformance harness (dials THIS bin through the real register_server path).
-kx-extension-sdk = { path = "../../crates/kx-extension-sdk", version = "0.1.0" }
+kx-extension-sdk = { path = "../../crates/kx-extension-sdk", version = "0.2.0" }
 
 [lints]
 workspace = true

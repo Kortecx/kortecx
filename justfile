@@ -123,6 +123,11 @@ test-connector-real:
     echo "hello from kortecx" > "$ROOT/note.txt"
     echo "Dialing $BIN (offline) through the conformance harness…"
     cargo run -q -p kx-extension-sdk --example conformance -- "$BIN" "$ROOT"
+    # The environment-map proofs need the SAME pinned install, so they run HERE rather than
+    # in the workspace test jobs — where the fixture is absent and they would (deliberately)
+    # fail rather than skip. `--ignored` is how they stay off the default run.
+    echo "Environment-map proofs against the pinned third-party server…"
+    cargo test -p kx-gateway --features mcp-gateway --test connector_env_map -- --ignored
 
 # The LIVE agentic tool-calling drive over a freshly-registered connector. Locally
 # validate on BOTH engines (Ollama + llama.cpp) with Gemma-4; in CI it rides

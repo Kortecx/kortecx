@@ -21,14 +21,11 @@ vi.mock("../../src/components/tools/RegisterToolForm", () => ({
 vi.mock("../../src/components/tools/AutoGrantStatus", () => ({
   AutoGrantStatus: () => <div data-testid="stub-autogrant" />,
 }));
-vi.mock("../../src/components/tools/ConnectionsPanel", () => ({
-  ConnectionsPanel: () => <div data-testid="connections-panel" />,
+vi.mock("../../src/components/tools/ConnectorsPanel", () => ({
+  ConnectorsPanel: () => <div data-testid="connectors-panel" />,
 }));
 vi.mock("../../src/components/tools/ScriptsPanel", () => ({
   ScriptsPanel: () => <div data-testid="scripts-panel" />,
-}));
-vi.mock("../../src/components/tools/IntegrationsPanel", () => ({
-  IntegrationsPanel: () => <div data-testid="integrations-panel" />,
 }));
 vi.mock("../../src/components/tools/TriggersPanel", () => ({
   TriggersPanel: () => <div data-testid="triggers-panel" />,
@@ -70,21 +67,20 @@ describe("ToolsSection — the MCP hub tabs", () => {
     expect(screen.getByTestId("scripts-panel")).toBeInTheDocument();
     expect(screen.getByTestId("tools-tab-scripts")).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByTestId("stub-registered-tools")).toBeNull();
-    expect(screen.queryByTestId("integrations-panel")).toBeNull();
+    expect(screen.queryByTestId("connectors-panel")).toBeNull();
   });
 
-  it("the Integrations tab renders the bundled connectors", () => {
-    render(<ToolsSection tab="integrations" />);
-    expect(screen.getByTestId("integrations-panel")).toBeInTheDocument();
-    expect(screen.getByTestId("tools-tab-integrations")).toHaveAttribute("aria-pressed", "true");
+  it("the Connectors tab renders the ONE merged catalog-and-instance surface", () => {
+    render(<ToolsSection tab="connectors" />);
+    expect(screen.getByTestId("connectors-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("tools-tab-connectors")).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByTestId("scripts-panel")).toBeNull();
-    expect(screen.queryByTestId("connections-panel")).toBeNull();
   });
 
-  it("the Connections tab renders the live MCP panel", () => {
-    render(<ToolsSection tab="connections" />);
-    expect(screen.getByTestId("connections-panel")).toBeInTheDocument();
-    expect(screen.queryByTestId("stub-registered-tools")).toBeNull();
+  it("offers no separate Integrations tab — it merged into Connectors", () => {
+    render(<ToolsSection tab="connectors" />);
+    expect(screen.queryByTestId("tools-tab-integrations")).toBeNull();
+    expect(screen.queryByTestId("tools-tab-connections")).toBeNull();
   });
 
   it("the Triggers tab renders the triggers panel", () => {

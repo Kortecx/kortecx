@@ -37,6 +37,32 @@
 //! The `Cache` arm is byte-identical to the previous behaviour. The classification is
 //! per-store and deliberate — see each caller.
 //!
+//! ## `connections.db` — schema version 3, and deliberately NOT routed through here
+//!
+//! The external-MCP connection store (`kx-mcp-gateway::store`) is the one gateway sidecar
+//! that does not open through [`open_sidecar`], and the exception is worth stating where a
+//! reader looks for the policy rather than leaving it to be rediscovered.
+//!
+//! It carries its own FORWARD migration: each schema addition is an idempotent
+//! `ALTER TABLE ADD COLUMN` guarded by `PRAGMA table_info`, applied on every open, with a
+//! newer-than-mine version REFUSED exactly as the table above requires. Version 2 added
+//! `session_mode`; version 3 adds `env_json`, the by-reference environment map, and an
+//! existing row takes `[]` — a connection registered before the map declared no
+//! environment, which is precisely what an empty map means.
+//!
+//! **Why not the rename-aside policy.** That policy exists because an INTERSECTION import
+//! is the best a generic upgrade can do: it recreates the schema and carries over whatever
+//! columns still match. Adding a column in place is strictly better — nothing is renamed
+//! aside, nothing is left behind in a `.bak`, and there is no window in which an operator's
+//! registered connectors live only in a backup file. The generic policy is the right answer
+//! when the schema change cannot be expressed as an addition; here it always has been.
+//!
+//! **What would move it here.** A change this store cannot express as an additive column —
+//! a dropped or retyped column — has no in-place migration, and at that point it should
+//! adopt `open_sidecar` as `UserAuthored` rather than grow a second bespoke policy. Until
+//! then, two upgrade paths exist because they solve different problems, not because nobody
+//! noticed.
+//!
 //! ## `policies.db` — `UserAuthored`, schema version 1
 //!
 //! The policy registry (`policies.rs`) is classified `UserAuthored` on the day it lands,

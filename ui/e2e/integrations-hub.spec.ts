@@ -39,11 +39,14 @@ test("MCP hub: Scripts, Triggers + Secrets tabs render their govern forms", asyn
     page.getByTestId("scripts-panel").or(page.getByText("Scripts need a newer gateway")),
   ).toBeVisible();
 
-  // Integrations tab → the bundled connectors, which are a static catalog and so
-  // always render regardless of what the gateway reports.
-  await page.getByTestId("tools-tab-integrations").click();
-  await expect(page.getByTestId("integrations-panel")).toBeVisible();
-  await expect(page.getByTestId("integration-dial-gmail")).toBeVisible();
+  // Connectors tab → the bundled connectors, which are a static catalog and so always
+  // render regardless of what the gateway reports. They now sit in the SAME list as
+  // anything dialed, each row carrying its own set-up action rather than a command to
+  // copy elsewhere, so the assertion is that the row and its action are both there.
+  await page.getByTestId("tools-tab-connectors").click();
+  await expect(page.getByTestId("connectors-panel")).toBeVisible();
+  await expect(page.getByTestId("connector-gmail")).toBeVisible();
+  await expect(page.getByTestId("connector-configure-gmail")).toBeVisible();
 
   // Triggers tab → the register form is always present (kind + auth CHIP groups,
   // recipe handle, submit), independent of whether the registry store is wired.

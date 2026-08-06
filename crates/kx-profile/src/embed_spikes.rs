@@ -80,7 +80,7 @@ pub async fn measure(channel: &Channel, opts: &EmbedOpts) -> Result<EmbedSamples
     .ok_or_else(|| {
         ProfileError::Client(
             "no embed model on the attached serve (set KX_SERVE_EMBED_MODEL to an \
-             embedding-capable model and launch `kx serve --features hnsw,serve-engine` \
+             embedding-capable model and launch `kx serve` on a build with hnsw and serve-engine \
              [+ a running Ollama daemon] or --features hnsw,inference [+ an embedding GGUF])"
                 .to_string(),
         )

@@ -14,10 +14,19 @@
 //!       a fire OR a dead-letter WITH a reason), never a silent wedge;
 //!   (d) a STATEFUL-session connector — fires under the reused-session firing posture.
 //!
-//! Whether a `tool` round fires is model-nondeterministic for the collision case
-//! (LOGGED), but the unique-tool + filesystem + stateful witnesses STEER an unambiguous
-//! full/leaf id and assert the fire (real-or-fail). Validate on BOTH engines with
-//! Gemma-4: llama.cpp (`KX_SERVE_MODEL_GGUF`) and Ollama (`KX_SERVE_OLLAMA`).
+//! ⚠ **Every witness in this file OBSERVES the fire; none asserts it.** Each steers an
+//! unambiguous id and then checks only the robust invariants — bounded, and every
+//! dead-letter reasoned — printing `fired=… (observed)`. So these pass whether or not a
+//! tool ever fires, and an earlier version of this header claimed the opposite
+//! ("assert the fire (real-or-fail)"), which is the shape a reader would have trusted.
+//! The stated reason for observing rather than asserting also cites `gemma3:12b`, which is
+//! not the model this project runs.
+//!
+//! The assertion lives in `connector_env_map_live`, which HARD-asserts that a live model
+//! fired a real third-party tool. These witnesses are kept as they are — their value is the
+//! recovery and dead-letter invariants, which hold regardless of what the model chooses.
+//! Validate on BOTH engines with Gemma-4: llama.cpp (`KX_SERVE_MODEL_GGUF`) and Ollama
+//! (`KX_SERVE_OLLAMA`).
 //!
 //! Gated `#[cfg(feature = "serve-engine")]` — deliberately NOT `inference`. `inference =
 //! ["serve-engine", ...]` is one-directional, so an `inference`-gated file compiles to

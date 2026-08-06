@@ -5,7 +5,7 @@
 //! - `kx datasets ingest <dataset> (--text <s> | --file <path>)... [--json]` — add
 //!   documents to `dataset` (created on first ingest). The CLI uses the SERVER-EMBED
 //!   path (each `--text`/`--file` payload is embedded server-side), so it needs
-//!   `kx serve --features inference` with a model; without one the gateway answers
+//!   `kx serve` on a build with inference, with a model; without one the gateway answers
 //!   `FAILED_PRECONDITION` honestly. The client-vector (FFI-free) ingest path is an
 //!   SDK surface (vectors over the wire), not a CLI one.
 //! - `kx datasets query <dataset> --text <query> [--k N] [--mode dense|hybrid] [--rerank on|off] [--json]`

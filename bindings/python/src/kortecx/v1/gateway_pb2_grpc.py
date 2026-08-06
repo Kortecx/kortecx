@@ -304,6 +304,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerResponse.FromString,
                 _registered_method=True)
+        self.RegisterMcpServerWithEnv = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RegisterMcpServerWithEnv',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerEnvRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerResponse.FromString,
+                _registered_method=True)
         self.ListMcpServers = channel.unary_unary(
                 '/kortecx.v1.KxGateway/ListMcpServers',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMcpServersRequest.SerializeToString,
@@ -1035,6 +1040,15 @@ class KxGatewayServicer(object):
         per-server rate-limit, warrant-gated egress, secret-less CredentialRef.
         Server-derived connection/tool ids; client tool_grants stay refused.
         OAuth/device-flow + a hosted credential marketplace are CLOUD.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RegisterMcpServerWithEnv(self, request, context):
+        """As RegisterMcpServer, plus the by-reference environment a stdio server needs. Same
+        response, same admission and dial; a separate entry point only because the environment
+        map must not sit on a message a natural-language proposal can carry.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1828,6 +1842,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
             'RegisterMcpServer': grpc.unary_unary_rpc_method_handler(
                     servicer.RegisterMcpServer,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerResponse.SerializeToString,
+            ),
+            'RegisterMcpServerWithEnv': grpc.unary_unary_rpc_method_handler(
+                    servicer.RegisterMcpServerWithEnv,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerEnvRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerResponse.SerializeToString,
             ),
             'ListMcpServers': grpc.unary_unary_rpc_method_handler(
@@ -3623,6 +3642,33 @@ class KxGateway(object):
             target,
             '/kortecx.v1.KxGateway/RegisterMcpServer',
             kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RegisterMcpServerWithEnv(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RegisterMcpServerWithEnv',
+            kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerEnvRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerResponse.FromString,
             options,
             channel_credentials,

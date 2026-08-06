@@ -50,6 +50,7 @@ fn dial_discover_register_fire_roundtrip() {
                 args: vec![],
             },
             None,
+            Vec::new(),
             SessionMode::Stateless,
         )
         .unwrap();
@@ -136,6 +137,7 @@ fn unreachable_server_registers_with_unreachable_health() {
                 args: vec![],
             },
             None,
+            Vec::new(),
             SessionMode::Stateless,
         )
         .unwrap();
@@ -169,6 +171,7 @@ fn register_and_test_agree_on_an_initialize_only_server() {
                 args: vec!["--tools-list-error".into()],
             },
             None,
+            Vec::new(),
             SessionMode::Stateless,
         )
         .unwrap();
@@ -198,6 +201,7 @@ fn internal_http_host_is_refused_at_admission() {
                 tls_required: false,
             },
             None,
+            Vec::new(),
             SessionMode::Stateless,
         )
         .unwrap_err();
@@ -222,6 +226,7 @@ fn userinfo_embedded_credentials_in_url_are_refused() {
                 tls_required: true,
             },
             None,
+            Vec::new(),
             SessionMode::Stateless,
         )
         .unwrap_err();
@@ -275,6 +280,7 @@ fn stateful_session_reuses_one_connection_across_invokes() {
                 args: vec![],
             },
             None,
+            Vec::new(),
             SessionMode::Stateful,
         )
         .unwrap();

@@ -16,7 +16,7 @@ export function EmbedderNotice() {
   return (
     <EmptyState
       title="No embedding model on this gateway"
-      detail="Text ingest & search need an embedder. Run `kx serve --features inference` with a model (KX_SERVE_MODEL_GGUF), or supply vectors directly via the SDK (the FFI-free client-vector path)."
+      detail="Text ingest & search need an embedder. Restart the runtime with a model (KX_SERVE_MODEL_GGUF), or supply vectors directly via the SDK (the FFI-free client-vector path)."
     />
   );
 }

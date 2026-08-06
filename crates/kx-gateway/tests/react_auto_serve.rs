@@ -1,4 +1,4 @@
-//! PR-6b-4 e2e witness: `KX_SERVE_AUTOGRANT=1 kx serve --features inference`
+//! PR-6b-4 e2e witness: `KX_SERVE_AUTOGRANT=1 kx serve` on an inference build
 //! provisions `kx/recipes/react-auto` and drives a LIVE `ReAct` chain through it.
 //!
 //! With the operator opt-in, the serve seeds `kx/recipes/react-auto`; the binder

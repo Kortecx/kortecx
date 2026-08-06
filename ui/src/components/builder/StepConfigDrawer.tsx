@@ -42,7 +42,7 @@ const CAPABILITY_AXES = [
     hint: "Only this step may dial the connector, and only this step's warrant carries its credential scope.",
     empty: (
       <>
-        No integrations connected. Dial one in <strong>Tools → Connections</strong>.
+        No connectors set up yet. Set one up in <strong>MCP → Connectors</strong>.
       </>
     ),
   },
@@ -321,8 +321,8 @@ export function StepConfigDrawer({
               <span className="builder-field__label">Model</span>
               {modelsUnsupported || served.length === 0 ? (
                 <p className="muted" data-testid="step-config-no-models">
-                  No model is being served. Start <code>kx serve --features inference</code> with{" "}
-                  <code>KX_SERVE_MODEL_GGUF</code> to run agent steps.
+                  No model is being served. Point the runtime at one with{" "}
+                  <code>KX_SERVE_MODEL_GGUF</code> and restart it to run agent steps.
                 </p>
               ) : (
                 <div className="builder-chips" data-testid="step-config-model">

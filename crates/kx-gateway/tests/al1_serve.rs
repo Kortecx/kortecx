@@ -1,5 +1,5 @@
-//! The real-model behavioral gate (`real-model-e2e`): `kx serve --features
-//! inference` runs a REAL in-process model dispatch through the embedded worker.
+//! The real-model behavioral gate (`real-model-e2e`): `kx serve` on a build with
+//! inference runs a REAL in-process model dispatch through the embedded worker.
 //!
 //! `Invoke` the server-provisioned `kx/recipes/chat` model recipe by handle+args
 //! → the embedded worker leases the bound model Mote → the `ModelRouterExecutor`

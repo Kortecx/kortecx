@@ -2643,6 +2643,14 @@ class DiscoverToolsResponse(_message.Message):
     has_more: bool
     def __init__(self, tools: _Optional[_Iterable[_Union[RegisteredTool, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
 
+class McpEnvEntry(_message.Message):
+    __slots__ = ("name", "credential_ref")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    CREDENTIAL_REF_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    credential_ref: str
+    def __init__(self, name: _Optional[str] = ..., credential_ref: _Optional[str] = ...) -> None: ...
+
 class RegisterMcpServerRequest(_message.Message):
     __slots__ = ("server_name", "transport", "endpoint", "args", "tls_required", "credential_ref", "session_mode")
     SERVER_NAME_FIELD_NUMBER: _ClassVar[int]
@@ -2660,6 +2668,14 @@ class RegisterMcpServerRequest(_message.Message):
     credential_ref: str
     session_mode: str
     def __init__(self, server_name: _Optional[str] = ..., transport: _Optional[str] = ..., endpoint: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tls_required: bool = ..., credential_ref: _Optional[str] = ..., session_mode: _Optional[str] = ...) -> None: ...
+
+class RegisterMcpServerEnvRequest(_message.Message):
+    __slots__ = ("base", "env")
+    BASE_FIELD_NUMBER: _ClassVar[int]
+    ENV_FIELD_NUMBER: _ClassVar[int]
+    base: RegisterMcpServerRequest
+    env: _containers.RepeatedCompositeFieldContainer[McpEnvEntry]
+    def __init__(self, base: _Optional[_Union[RegisterMcpServerRequest, _Mapping]] = ..., env: _Optional[_Iterable[_Union[McpEnvEntry, _Mapping]]] = ...) -> None: ...
 
 class RegisterMcpServerResponse(_message.Message):
     __slots__ = ("connection_id", "discovered", "health")
@@ -2680,7 +2696,7 @@ class ListMcpServersRequest(_message.Message):
     def __init__(self, limit: _Optional[int] = ..., after_name: _Optional[str] = ...) -> None: ...
 
 class McpServer(_message.Message):
-    __slots__ = ("connection_id", "server_name", "transport", "endpoint", "health", "tool_count", "credential_ref_present", "session_mode")
+    __slots__ = ("connection_id", "server_name", "transport", "endpoint", "health", "tool_count", "credential_ref_present", "session_mode", "env_names")
     CONNECTION_ID_FIELD_NUMBER: _ClassVar[int]
     SERVER_NAME_FIELD_NUMBER: _ClassVar[int]
     TRANSPORT_FIELD_NUMBER: _ClassVar[int]
@@ -2689,6 +2705,7 @@ class McpServer(_message.Message):
     TOOL_COUNT_FIELD_NUMBER: _ClassVar[int]
     CREDENTIAL_REF_PRESENT_FIELD_NUMBER: _ClassVar[int]
     SESSION_MODE_FIELD_NUMBER: _ClassVar[int]
+    ENV_NAMES_FIELD_NUMBER: _ClassVar[int]
     connection_id: bytes
     server_name: str
     transport: str
@@ -2697,7 +2714,8 @@ class McpServer(_message.Message):
     tool_count: int
     credential_ref_present: bool
     session_mode: str
-    def __init__(self, connection_id: _Optional[bytes] = ..., server_name: _Optional[str] = ..., transport: _Optional[str] = ..., endpoint: _Optional[str] = ..., health: _Optional[str] = ..., tool_count: _Optional[int] = ..., credential_ref_present: bool = ..., session_mode: _Optional[str] = ...) -> None: ...
+    env_names: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, connection_id: _Optional[bytes] = ..., server_name: _Optional[str] = ..., transport: _Optional[str] = ..., endpoint: _Optional[str] = ..., health: _Optional[str] = ..., tool_count: _Optional[int] = ..., credential_ref_present: bool = ..., session_mode: _Optional[str] = ..., env_names: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ListMcpServersResponse(_message.Message):
     __slots__ = ("servers", "has_more")

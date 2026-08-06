@@ -12,7 +12,7 @@ that survives a crash and re-serves from commit on replay (it is never re-sample
 The LLM rerank is **off by default**. Turn it on for a `kx serve` process with:
 
 ```sh
-KX_SERVE_RAG_LLM_RERANK=1 kx serve --features inference,hnsw
+KX_SERVE_RAG_LLM_RERANK=1 kx serve
 ```
 
 It then applies automatically on both live RAG paths:
@@ -100,7 +100,7 @@ that silently fell back to base order once passed every unit test + CI job. See
 kx datasets ingest kb ./docs/*.md
 
 # 2. Serve with the LLM rerank on
-KX_SERVE_RAG_LLM_RERANK=1 kx serve --features inference,hnsw &
+KX_SERVE_RAG_LLM_RERANK=1 kx serve &
 
 # 3. Ask a grounded question (chat-rag) — the answer reads the reranked passages
 kx apps run kx/recipes/chat-rag --dataset kb --prompt "how does recovery work?"

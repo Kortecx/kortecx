@@ -161,6 +161,7 @@ impl<S: ContentStore + Send + Sync + 'static> McpGatewayAdmin for HostMcpGateway
                 &reg.server_name,
                 transport,
                 reg.credential_ref,
+                reg.env,
                 session_mode,
             )
             .map_err(map_err)?;
@@ -183,6 +184,10 @@ impl<S: ContentStore + Send + Sync + 'static> McpGatewayAdmin for HostMcpGateway
                 health: c.health.tag().to_string(),
                 tool_count: c.tool_count,
                 credential_ref_present: c.credential_ref.is_some(),
+                // Variable NAMES only — the ref each maps to stays in the sidecar, so a
+                // governance view shows what is configured without disclosing which
+                // stored secret backs it.
+                env_names: c.env.into_iter().map(|(name, _ref)| name).collect(),
                 session_mode: c.session_mode.tag().to_string(),
             })
             .collect())
@@ -242,17 +247,33 @@ impl<S: ContentStore + Send + Sync + 'static> McpGatewayAdmin for HostMcpGateway
                 ))
             })?;
         }
-        // The connection's credential ref NAME (never the value, D81) → the warrant's
+        // The connection's credential ref NAMES (never the values, D81) → the warrant's
         // secret scope, so the broker admits the transport's out-of-band resolution.
-        let secret_scope = self
+        //
+        // EVERY ref the connection references, not just the legacy single one: the stdio
+        // transport declares a scope over all of them, and the broker refuses a dispatch
+        // whose declared scope exceeds its warrant. Deriving this from `credential_ref`
+        // alone made a server configured through the environment map fire-proof —
+        // registration and discovery both succeeded and only the fire was refused, on an
+        // axis (`SecretScope`) that names no connector and no variable.
+        let refs: BTreeSet<SecretRef> = self
             .gateway
             .list_servers()
             .ok()
             .and_then(|servers| servers.into_iter().find(|c| c.name == server_name))
-            .and_then(|c| c.credential_ref)
-            .map_or(SecretScope::None, |cred| {
-                SecretScope::AllowList(BTreeSet::from([SecretRef(cred)]))
-            });
+            .map(|c| {
+                c.credential_ref
+                    .into_iter()
+                    .chain(c.env.into_iter().map(|(_var, secret_ref)| secret_ref))
+                    .map(SecretRef)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let secret_scope = if refs.is_empty() {
+            SecretScope::None
+        } else {
+            SecretScope::AllowList(refs)
+        };
         let cap = def.required_capability.clone();
         let mote = diagnostic_fire_mote(&tool_id, &def.tool_version);
         // The single-grant warrant is built from the tool's OWN declared scopes — the

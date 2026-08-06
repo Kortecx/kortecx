@@ -79,7 +79,7 @@ agent (`kx agent run --dataset <name>`) and the model searches it autonomously w
 Ingest and query are **pluggable** on embedding:
 
 - **Server-embed (text).** The CLI and the UI embed text server-side. This works on
-  **either inference engine** — `kx serve --features hnsw,serve-engine` with a reachable
+  **either inference engine** — `kx serve` on a build with hnsw and serve-engine, with a reachable
   Ollama (set `KX_SERVE_EMBED_MODEL=embeddinggemma`), or `--features hnsw,inference` with
   a GGUF. The embed model defaults to the primary; override it with `KX_SERVE_EMBED_MODEL`
   (see [Local inference engines → Embeddings & RAG](./local-inference-engines.md)). With
@@ -179,7 +179,7 @@ as honest, disabled cards (never fakes):
 ## Degraded states
 
 - **No `hnsw` feature.** A gateway built without `--features hnsw` has no dataset view;
-  the RPCs answer `UNIMPLEMENTED` and the surfaces say so honestly (`run kx serve --features hnsw`).
+  the RPCs answer `UNIMPLEMENTED` and the surfaces say so honestly (run a serve built with hnsw).
 - **No embedder.** Text ingest/query on a serve with no embed model (no Ollama and no
   GGUF) returns `FAILED_PRECONDITION` with actionable guidance — the client-vector path
   is the FFI-free alternative.

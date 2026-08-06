@@ -73,6 +73,10 @@ pub struct AddSpec {
     pub tls_required: bool,
     /// OPTIONAL secret-less credential ref NAME (env var / vault key).
     pub credential_ref: String,
+    /// stdio: the by-reference environment map from repeatable `--env NAME=REF`, as
+    /// `(variable NAME, credential ref NAME)`. The right-hand side names a stored secret;
+    /// it is never the secret itself.
+    pub env: Vec<(String, String)>,
     /// PR-6b-3 firing posture: `"stateful"` | `"stateless"` (default stateless).
     pub session_mode: String,
 }
@@ -84,6 +88,56 @@ pub struct ConnectionsArgs {
     pub sub: ConnectionsSub,
     /// Common client flags.
     pub common: ClientCommon,
+}
+
+/// Parse one `--env NAME=CREDENTIAL_REF` entry.
+///
+/// The right-hand side is the NAME of a stored secret, never the secret. That distinction
+/// is the whole storage-at-rest posture, and `--env TOKEN=sk-live-abc123` is the natural
+/// mistake — it looks like every other tool's `--env`, and accepting it would write a
+/// credential into `connections.db` and out through every list surface. So a ref is held to
+/// what a NAME can be: printable, unspaced, and drawn from the characters secret stores use.
+/// Anything else is refused with the rule stated, not silently stored.
+fn parse_env_entry(raw: &str) -> Result<(String, String), CliError> {
+    let (name, secret_ref) = raw.split_once('=').ok_or_else(|| {
+        CliError::Usage(format!(
+            "--env expects NAME=CREDENTIAL_REF, got {raw:?} (the right side names a stored \
+             secret — set the value with `kx secrets set`)"
+        ))
+    })?;
+    let name = name.trim();
+    let secret_ref = secret_ref.trim();
+    if name.is_empty() {
+        return Err(CliError::Usage(format!(
+            "--env {raw:?} has an empty variable name"
+        )));
+    }
+    if secret_ref.is_empty() {
+        return Err(CliError::Usage(format!(
+            "--env {name}= has no credential ref — name a secret stored with \
+             `kx secrets set --name <ref>`, never the value itself"
+        )));
+    }
+    let name_ok = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+    if !name_ok {
+        return Err(CliError::Usage(format!(
+            "--env variable name {name:?} is not a shell environment variable name \
+             (letters, digits, '_' and '.')"
+        )));
+    }
+    let ref_ok = secret_ref
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':'));
+    if !ref_ok {
+        return Err(CliError::Usage(format!(
+            "--env {name}=… : {secret_ref:?} does not look like a credential REF name. \
+             This flag takes the NAME of a stored secret, not its value — store the value \
+             with `kx secrets set --name <ref> --value '…'` and pass <ref> here"
+        )));
+    }
+    Ok((name.to_string(), secret_ref.to_string()))
 }
 
 /// Resolve the firing posture (PR-6b-3): `--stateful` wins; else a validated
@@ -161,6 +215,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
     let mut server_args: Vec<String> = Vec::new();
     let mut tls_required = false;
     let mut credential_ref = String::new();
+    // The by-reference environment map, one `--env NAME=CREDENTIAL_REF` per entry.
+    let mut env: Vec<(String, String)> = Vec::new();
     // PR-6b-3: the firing posture. `--stateful` is sugar for
     // `--session-mode stateful`; default (neither) is stateless.
     let mut session_mode: Option<String> = None;
@@ -185,6 +241,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
             "--arg" => server_args.push(next_value(&mut args, "--arg")?),
             "--tls-required" => tls_required = true,
             "--credential-ref" => credential_ref = next_value(&mut args, "--credential-ref")?,
+            "--env" => env.push(parse_env_entry(&next_value(&mut args, "--env")?)?),
             "--session-mode" => session_mode = Some(next_value(&mut args, "--session-mode")?),
             "--stateful" => stateful_flag = true,
             "--tool" => tool = Some(next_value(&mut args, "--tool")?),
@@ -270,6 +327,13 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
                 })?,
             };
             let session_mode = resolve_session_mode(stateful_flag, session_mode.as_deref())?;
+            if transport == "http" && !env.is_empty() {
+                return Err(CliError::Usage(
+                    "--env applies to a stdio server's child process; an http connector \
+                     authenticates with --credential-ref"
+                        .into(),
+                ));
+            }
             ConnectionsSub::Add(AddSpec {
                 name,
                 transport,
@@ -277,6 +341,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
                 args: server_args,
                 tls_required,
                 credential_ref,
+                env,
                 session_mode,
             })
         }
@@ -287,6 +352,73 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
         }
     };
     Ok(ConnectionsArgs { sub, common })
+}
+
+/// `connections add`: register + DIAL an external MCP server.
+///
+/// Extracted from [`execute`] so the dispatch stays a readable table of one line per
+/// subcommand; the environment map made this arm the longest by some distance.
+async fn run_add(
+    spec: AddSpec,
+    resolved: &crate::client::Resolved,
+    client: &mut proto::kx_gateway_client::KxGatewayClient<tonic::transport::Channel>,
+    json: bool,
+) -> Result<(), CliError> {
+    // G017: for a stdio connection the endpoint IS the connector binary. Probe how it
+    // resolves so `add` warns NOW if the binary is absent, instead of the user
+    // discovering it only when a run tries to dial and fails `Unreachable` at spawn.
+    let probe_target = (spec.transport == "stdio").then(|| spec.endpoint.clone());
+    let base = proto::RegisterMcpServerRequest {
+        server_name: spec.name,
+        transport: spec.transport,
+        endpoint: spec.endpoint,
+        args: spec.args,
+        tls_required: spec.tls_required,
+        credential_ref: spec.credential_ref,
+        session_mode: spec.session_mode,
+    };
+    // Both halves of an entry are NAMES — the variable the server reads, and the stored
+    // secret that supplies it. No value travels.
+    let env: Vec<proto::McpEnvEntry> = spec
+        .env
+        .into_iter()
+        .map(|(name, credential_ref)| proto::McpEnvEntry {
+            name,
+            credential_ref,
+        })
+        .collect();
+    // One command either way: the environment map rides a separate RPC because the plain
+    // registration request is also what a natural-language proposal displays, and an
+    // environment is not something a model may propose.
+    let resp = if env.is_empty() {
+        client
+            .register_mcp_server(resolved.request(base)?)
+            .await
+            .map_err(CliError::from_status)?
+            .into_inner()
+    } else {
+        let req = proto::RegisterMcpServerEnvRequest {
+            base: Some(base),
+            env,
+        };
+        client
+            .register_mcp_server_with_env(resolved.request(req)?)
+            .await
+            .map_err(CliError::from_status)?
+            .into_inner()
+    };
+    println!("{}", format::render_register_server(&resp, json));
+    if let Some(cmd) = probe_target {
+        if probe_connector(&cmd) == ConnectorResolution::Missing {
+            eprintln!(
+                "⚠ connector {cmd:?} is not installed (no kx-sibling or PATH match) — \
+                 dialing it will fail at spawn. Build it from a checkout \
+                 (e.g. `cargo install --path integrations/{cmd}`) or run \
+                 `kx connections doctor` for per-provider install guidance."
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Execute `connections`.
@@ -301,37 +433,7 @@ pub async fn execute(args: ConnectionsArgs) -> Result<(), CliError> {
     let json = args.common.json;
 
     match args.sub {
-        ConnectionsSub::Add(spec) => {
-            // G017: for a stdio connection the endpoint IS the connector binary. Probe how it
-            // resolves so `add` warns NOW if the binary is absent, instead of the user
-            // discovering it only when a run tries to dial and fails `Unreachable` at spawn.
-            let probe_target = (spec.transport == "stdio").then(|| spec.endpoint.clone());
-            let req = proto::RegisterMcpServerRequest {
-                server_name: spec.name,
-                transport: spec.transport,
-                endpoint: spec.endpoint,
-                args: spec.args,
-                tls_required: spec.tls_required,
-                credential_ref: spec.credential_ref,
-                session_mode: spec.session_mode,
-            };
-            let resp = client
-                .register_mcp_server(resolved.request(req)?)
-                .await
-                .map_err(CliError::from_status)?
-                .into_inner();
-            println!("{}", format::render_register_server(&resp, json));
-            if let Some(cmd) = probe_target {
-                if probe_connector(&cmd) == ConnectorResolution::Missing {
-                    eprintln!(
-                        "⚠ connector {cmd:?} is not installed (no kx-sibling or PATH match) — \
-                         dialing it will fail at spawn. Build it from a checkout \
-                         (e.g. `cargo install --path integrations/{cmd}`) or run \
-                         `kx connections doctor` for per-provider install guidance."
-                    );
-                }
-            }
-        }
+        ConnectionsSub::Add(spec) => run_add(spec, &resolved, &mut client, json).await?,
         ConnectionsSub::List => {
             let req = proto::ListMcpServersRequest {
                 limit: 0,
@@ -509,6 +611,129 @@ mod tests {
         assert!(spec.tls_required);
         assert_eq!(spec.credential_ref, "GH_MCP_TOKEN");
         assert_eq!(spec.session_mode, "stateless", "default is stateless-first");
+    }
+
+    #[test]
+    fn parses_a_repeatable_env_map_in_declaration_order() {
+        let a = p(&[
+            "add",
+            "--name",
+            "gitlab",
+            "--command",
+            "mcp-server-gitlab",
+            "--env",
+            "GITLAB_PERSONAL_ACCESS_TOKEN=gitlab-token",
+            "--env",
+            "GITLAB_API_URL=gitlab-url",
+        ])
+        .unwrap();
+        let ConnectionsSub::Add(spec) = a.sub else {
+            panic!("expected Add");
+        };
+        // TWO entries — the shape a single `--credential-ref` cannot express — and the
+        // order they were written in, because a duplicate is refused by position downstream.
+        assert_eq!(
+            spec.env,
+            vec![
+                (
+                    "GITLAB_PERSONAL_ACCESS_TOKEN".to_string(),
+                    "gitlab-token".to_string()
+                ),
+                ("GITLAB_API_URL".to_string(), "gitlab-url".to_string()),
+            ]
+        );
+    }
+
+    /// The refusals, each asserting its REASON. `--env NAME=value` is the natural mistake:
+    /// it looks like every other tool's `--env`, and accepting it would write a credential
+    /// into the connections store and out through every list surface.
+    #[test]
+    fn env_refusals_name_the_by_reference_rule() {
+        // A value, not a ref name. The refusal has to teach the rule, not just decline.
+        let err = p(&[
+            "add",
+            "--name",
+            "s",
+            "--command",
+            "x",
+            "--env",
+            "TOKEN=sk-live-abc/=+ secret",
+        ])
+        .expect_err("a value-shaped argument is refused");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("NAME of a stored secret") || msg.contains("credential REF name"),
+            "the refusal states the by-reference rule: {msg}"
+        );
+
+        // No `=` at all.
+        let err = p(&["add", "--name", "s", "--command", "x", "--env", "TOKEN"])
+            .expect_err("a bare name is refused");
+        assert!(
+            format!("{err}").contains("NAME=CREDENTIAL_REF"),
+            "the refusal shows the shape: {err}"
+        );
+
+        // An empty ref — a variable declared with nothing to resolve it.
+        let err = p(&["add", "--name", "s", "--command", "x", "--env", "TOKEN="])
+            .expect_err("an empty ref is refused");
+        assert!(
+            format!("{err}").contains("kx secrets set"),
+            "the refusal names where the value belongs: {err}"
+        );
+
+        // A variable name that is not a shell environment variable name.
+        let err = p(&[
+            "add",
+            "--name",
+            "s",
+            "--command",
+            "x",
+            "--env",
+            "not a var=r",
+        ])
+        .expect_err("a malformed variable name is refused");
+        assert!(
+            format!("{err}").contains("environment variable name"),
+            "the refusal names the offending half: {err}"
+        );
+
+        // The ACCEPTING control: the same call with a well-formed entry parses. Each
+        // refusal above differs from this by exactly one thing.
+        let a = p(&[
+            "add",
+            "--name",
+            "s",
+            "--command",
+            "x",
+            "--env",
+            "TOKEN=my-ref",
+        ])
+        .expect("a well-formed entry parses");
+        let ConnectionsSub::Add(spec) = a.sub else {
+            panic!("expected Add");
+        };
+        assert_eq!(spec.env, vec![("TOKEN".to_string(), "my-ref".to_string())]);
+    }
+
+    /// `--env` configures a CHILD PROCESS, so it is meaningless for an http connector —
+    /// and silently ignoring it would leave an operator believing a variable was set.
+    #[test]
+    fn env_is_refused_for_an_http_connector() {
+        let err = p(&[
+            "add",
+            "--name",
+            "s",
+            "--url",
+            "https://mcp.example.com/rpc",
+            "--env",
+            "TOKEN=my-ref",
+        ])
+        .expect_err("--env on an http connector is refused");
+        assert!(
+            format!("{err}").contains("--credential-ref"),
+            "the refusal points at the flag that DOES apply: {err}"
+        );
     }
 
     #[test]

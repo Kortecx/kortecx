@@ -116,7 +116,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     label: "MCP",
     path: "/tools",
     icon: "tools",
-    hint: "Tools, scripts, integrations, connections, triggers & secrets",
+    hint: "Tools, scripts, connectors, skills, triggers & secrets",
   },
   {
     // A read-only view over the models serving this gateway (`ListModels`) plus the

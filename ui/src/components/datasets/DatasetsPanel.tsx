@@ -42,7 +42,7 @@ export function DatasetsPanel({
       {notWired ? (
         <EmptyState
           title="Datasets not enabled here"
-          detail="This gateway was built without the `hnsw` feature. Start it with `kx serve --features hnsw` to enable RAG corpora."
+          detail="This gateway cannot store retrieval corpora — it was built without them. Use a build that includes retrieval to create one."
         />
       ) : null}
       {datasets.isError && !notWired ? (

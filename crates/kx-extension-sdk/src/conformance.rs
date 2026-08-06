@@ -57,6 +57,11 @@ pub struct ConnectorUnderTest {
     /// An optional out-of-band credential reference (an env-var NAME, D81). When
     /// set AND that env var holds a value, item 7 scans every sink for that value.
     pub credential_ref: Option<String>,
+    /// The by-reference environment map, `(variable NAME, credential ref NAME)`. A real
+    /// connector often needs more than one variable — an API base URL beside its token —
+    /// and a gate that could only express one could not accept such a connector at all.
+    /// Item 7's sink scan covers every ref named here, not just `credential_ref`.
+    pub env: Vec<(String, String)>,
     /// The firing posture (stateless single-shot vs a reused stateful session).
     pub session_mode: SessionMode,
 }
@@ -175,6 +180,7 @@ fn dial(cut: &ConnectorUnderTest) -> Result<Dialed, String> {
             &cut.name,
             cut.transport.clone(),
             cut.credential_ref.clone(),
+            cut.env.clone(),
             cut.session_mode,
         )
         .map_err(|e| format!("register_server: {e}"))?;
@@ -653,6 +659,7 @@ pub fn reference_connector() -> Option<ConnectorUnderTest> {
             args: vec![],
         },
         credential_ref: None,
+        env: Vec::new(),
         session_mode: SessionMode::Stateless,
     })
 }

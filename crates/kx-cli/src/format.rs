@@ -1393,6 +1393,8 @@ pub fn render_connections_list(resp: &proto::ListMcpServersResponse, json: bool)
                     "health": s.health,
                     "tool_count": s.tool_count,
                     "credential_ref_present": s.credential_ref_present,
+                    // Variable NAMES only — never the refs behind them, never the values.
+                    "env_names": s.env_names,
                     "session_mode": s.session_mode,
                 })
             })
@@ -1415,9 +1417,16 @@ pub fn render_connections_list(resp: &proto::ListMcpServersResponse, json: bool)
                 } else {
                     ""
                 };
+                // Which variables this server is configured with — names only, so the line
+                // stays safe to paste into an issue.
+                let env = if s.env_names.is_empty() {
+                    String::new()
+                } else {
+                    format!("  env: {}", s.env_names.join(","))
+                };
                 format!(
-                    "{}  [{}]  {}  {} tool(s)  ({}){}{}",
-                    s.server_name, s.transport, s.endpoint, s.tool_count, s.health, cred, mode
+                    "{}  [{}]  {}  {} tool(s)  ({}){}{}{}",
+                    s.server_name, s.transport, s.endpoint, s.tool_count, s.health, cred, mode, env
                 )
             })
             .collect::<Vec<_>>()
@@ -3506,6 +3515,10 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
                     "turn": t.turn,
                     "turn_mote_id": hex::encode(&t.turn_mote_id),
                     "instance_id": hex::encode(&t.instance_id),
+                    // The chain key. Without it a caller reading this output cannot tell
+                    // which turns belong to ONE agentic submission — `instance_id` repeats
+                    // across chains and `turn_mote_id` is per-turn. Empty ⇒ unsalted.
+                    "step_salt": hex::encode(&t.step_salt),
                     "model_id": t.model_id,
                     "branch": t.branch,
                     "tool_id": t.tool_id,

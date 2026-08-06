@@ -2365,18 +2365,41 @@ export abstract class KxClientBase {
    * (the secret VALUE is never sent, D81). A dial failure is NOT fatal — the
    * server persists with `health="unreachable"` (honest, never a fabricated
    * success). An internal host is refused (`permission_denied`).
+   *
+   * `env` gives a stdio server the environment it needs, BY REFERENCE: each key is a
+   * variable the server reads, each value NAMES a stored secret. Both halves are names,
+   * so nothing here puts a credential at rest — the value resolves at spawn and is
+   * dropped. A server needing two variables needs two entries:
+   *
+   * ```ts
+   * await kx.registerMcpServer({
+   *   name: "gitlab",
+   *   endpoint: "mcp-server-gitlab",
+   *   env: { GITLAB_PERSONAL_ACCESS_TOKEN: "gitlab-token", GITLAB_API_URL: "gitlab-url" },
+   * });
+   * ```
    */
   async registerMcpServer(input: RegisterMcpServerInput): Promise<RegisterServerResult> {
+    const base = {
+      serverName: input.name,
+      transport: input.transport ?? "stdio",
+      endpoint: input.endpoint,
+      args: [...(input.args ?? [])],
+      tlsRequired: input.tlsRequired ?? false,
+      credentialRef: input.credentialRef ?? "",
+      sessionMode: input.sessionMode ?? "stateless",
+    };
+    const env = Object.entries(input.env ?? {}).map(([name, credentialRef]) => ({
+      name,
+      credentialRef,
+    }));
+    // One call either way. The environment map rides a separate RPC because the plain
+    // registration request is also what a natural-language proposal displays, and an
+    // environment is not something a model may propose.
     const resp = await rpc(
-      this.grpc.registerMcpServer({
-        serverName: input.name,
-        transport: input.transport ?? "stdio",
-        endpoint: input.endpoint,
-        args: [...(input.args ?? [])],
-        tlsRequired: input.tlsRequired ?? false,
-        credentialRef: input.credentialRef ?? "",
-        sessionMode: input.sessionMode ?? "stateless",
-      }),
+      env.length === 0
+        ? this.grpc.registerMcpServer(base)
+        : this.grpc.registerMcpServerWithEnv({ base, env }),
     );
     return {
       connectionId: encode(resp.connectionId),
