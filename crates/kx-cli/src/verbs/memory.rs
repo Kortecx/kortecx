@@ -2,9 +2,10 @@
 //! `ListMemories` / `RecallMemory` / `ForgetMemory`).
 //!
 //! - `kx memory add <text> [--kind semantic|episodic] [--json]` — remember a fact.
-//!   The CLI uses the SERVER-EMBED path, so it needs `kx serve --features
-//!   inference,hnsw` with a model AND `KX_SERVE_MEMORY=1`; without one the gateway
-//!   answers `FAILED_PRECONDITION` / `Unimplemented` honestly.
+//!   The CLI uses the SERVER-EMBED path, so the serve needs the `hnsw` cargo
+//!   feature (the prebuilt release binary has it), an embed-capable model, AND
+//!   `KX_SERVE_MEMORY=1`; without one the gateway answers
+//!   `FAILED_PRECONDITION` / `Unimplemented` honestly.
 //! - `kx memory list [--instance <hex16>] [--limit N] [--json]` — the episodic log,
 //!   newest-first, optionally scoped to one run.
 //! - `kx memory recall --text <query> [--k N] [--json]` — the top-k most-similar
@@ -444,8 +445,9 @@ fn map_memory_status(status: tonic::Status) -> CliError {
     if status.code() == Code::Unimplemented {
         CliError::Rpc {
             code: Code::Unimplemented,
-            message: "memory is not wired on this gateway (run `kx serve --features \
-                      inference,hnsw` with `KX_SERVE_MEMORY=1`)"
+            message: "memory is not wired on this gateway — it needs the `hnsw` cargo \
+                      feature (the prebuilt release binary has it) AND `KX_SERVE_MEMORY=1` \
+                      on the serve"
                 .into(),
             refusal_code: None,
         }

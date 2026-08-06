@@ -56,10 +56,13 @@ The same registration is available imperatively across every surface — pick wh
 fits (the flow sugar above just calls the SDK method for you):
 
 ```bash title="CLI (operator)"
-kx connections add --name fs --command "npx -y @modelcontextprotocol/server-filesystem /data"
+# `--command` is one program path (spawned directly — no shell, no word-splitting);
+# each argument is its own `--arg`.
+kx connections add --name fs --command npx \
+  --arg -y --arg @modelcontextprotocol/server-filesystem --arg /data
 kx connections list
 kx connections fire --name fs --tool list_directory --args '{"path":"/data"}'  # exercise it live
-kx agent run --goal "list /data" --tools fs/list_directory
+kx chat --tools 'fs/list_directory@1' --message "List what is in /data."       # model-driven
 ```
 
 ```python title="Python — kx.connections namespace"

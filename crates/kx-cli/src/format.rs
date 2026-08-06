@@ -1506,9 +1506,9 @@ pub fn render_connections_doctor(rows: &[ConnectorDoctorRow], json: bool) -> Str
                 }
                 ConnectorDoctorStatus::OnPath(p) => format!("  ✓ {} → on PATH {p}", r.provider),
                 ConnectorDoctorStatus::Missing => format!(
-                    "  ✗ {} → `{}` NOT FOUND — install it beside `kx` or on PATH \
-                     (`cargo install --path integrations/{}` from a checkout), then set the \
-                     {} secret",
+                    "  ✗ {} → `{}` NOT FOUND — re-run the installer (the release's kx-tools \
+                     bundle places it beside `kx`), or from a checkout: `cargo install --path \
+                     integrations/{}`; then set the {} secret",
                     r.provider, r.command, r.command, r.credential_ref
                 ),
             };

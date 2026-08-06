@@ -6,6 +6,36 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Changed
 
+- **The release now ships the runtime's own agent tools.** The prebuilt release carries a
+  `kx-tools-<target>.tar.gz` beside the `kx` binary: the bundled deterministic stdio tools
+  (`kx-mcp-echo`, `kx-mcp-calc`, `kx-mcp-kv`) and the four bundled connectors
+  (`kx-connector-{gmail,discord,slack,notion}`). The installer verifies and unpacks them beside
+  `kx`, where the runtime resolves them — so on a fresh `curl | sh` install, `kx chat --tools`
+  and `kx agent run` now actually run an agent, `kx connections add --provider gmail` dials a
+  binary that exists, and `kx connections doctor` reports all four connectors resolvable.
+  Previously the release shipped only `kx`: the agent recipe was never seeded and the agent verbs
+  failed with an unexplained authorization error. Installing an older release still works — the
+  installer says plainly when a release predates the tools bundle (`KX_SKIP_TOOLS=1` skips it
+  explicitly).
+- **Bundled tool binaries resolve beside the executable.** The runtime now looks for its bundled
+  tools next to the running `kx` binary (after the explicit env override and the container image
+  path) — which also makes the from-source path work: `cargo install --path crates/kx-mcp --bin
+  kx-mcp-echo --bin kx-mcp-calc --bin kx-mcp-kv` puts the tools beside a
+  `cargo install`ed `kx`. A missing bundled tool is now a loud serve-boot warning instead of
+  silence, and `kx agent run` explains exactly what is missing (model or tool binary) instead of
+  failing with a bare permission error.
+- **The release packaging is proven before a tag exists.** A new `verify-release-parity` gate
+  builds the release artefacts with the same script the release workflow runs, installs them with
+  the real installer, and asserts the installed binary reproduces the canonical digest, registers
+  its bundled capabilities, seeds the agent recipe, and accepts the README's headline command —
+  hermetically, on every change. The installer itself gains a base-URL override for exactly this
+  kind of pre-release verification; its production default is unchanged and asserted.
+- **Doc examples now execute as written.** `kx connections add --command` takes one program path
+  (spawned directly, no shell) with each argument as its own `--arg` — the examples that packed a
+  whole `npx …` command line into one string could never spawn and are fixed everywhere they
+  appeared, as is an example using a flag the agent verb does not have. The `KX_SERVE_FS_ROOT`
+  variable the README's headline chat depends on is now documented beside that command, and
+  `--features …` is no longer presented as a `kx serve` argument (it is a cargo build flag).
 - **A served model now tells the runtime how it spells a tool call.** The argument grammar was
   armed on one syntax — the JSON envelope the runtime's own prompt teaches — so a model that
   proposes tool calls in a different one had its arguments checked by nothing: the call was

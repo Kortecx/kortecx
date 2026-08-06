@@ -709,12 +709,16 @@ lease-test:
     echo ""
     echo " ✓ lease-test PASS — mutual exclusion · --wait serialize · ownership · TTL drain"
 
-# Docs-as-test gate: run the README quickstart end to end and assert the canonical
-# projection digest. Builds the FFI-free `kx` binary (no C++ toolchain) and drives
-# run → crash → replay → digest over temp dirs, asserting the canonical digest
-# (8/8 committed) at every step. Cleans up. Fails LOUDLY on any drift — this is the
-# gate that keeps the README honest. NOT part of `just ci` (a separate, fast gate).
-# Prereqs lease-test so the back-pressure mutex is proven in the same (GPU-free) CI job.
+# Determinism gate: drive run → crash → replay → digest over temp dirs and assert
+# the canonical projection digest (8/8 committed) at every step. Builds the
+# FFI-free `kx` binary (no C++ toolchain). Fails LOUDLY on any drift. NOT part of
+# `just ci` (a separate, fast gate), and — despite this job's historical name — it
+# does NOT drive the README quickstart: the README's real first commands
+# (install → `kx serve --dev-allow-local` → the chat/agent headline) are driven by
+# `verify-release-parity` below, against the INSTALLED release artefact. This job
+# IS one of the required branch-protection contexts; keep its name and its digest
+# arms stable. Prereqs lease-test so the back-pressure mutex is proven in the same
+# (GPU-free) CI job.
 verify-quickstart: lease-test
     #!/usr/bin/env bash
     set -euo pipefail
@@ -754,6 +758,419 @@ verify-quickstart: lease-test
     echo ""
     echo " ✓ verify-quickstart PASS — clean run, crash-then-replay, and a fresh"
     echo "   digest fold all produce the canonical digest (8/8 committed)."
+
+# ============================================================================
+# Release-parity gates — the gate that would have caught a release that ships
+# the binary without the tools it needs
+# ============================================================================
+
+# verify-release-parity — prove the RELEASED artefact can run the README's real
+# first commands, hermetically (no network, no real model, deterministic):
+#
+#   package (the SAME scripts/package-release.sh the tag runs) → install via the
+#   REAL scripts/install.sh over loopback → identity spine (sha equality
+#   built→packaged→downloaded→installed) → the digest triple ON THE INSTALLED
+#   BINARY → direct stdio round-trips on every bundled tool bin → serve-boot
+#   arms against a loopback STUB Ollama (registration/seeding/bind are gated on
+#   `serve_model.is_some()`, and the stub satisfies exactly the discovery
+#   surface `build_ollama_engine` reads; generation is NEVER asserted here — a
+#   real model drives `verify-release-live`) → negative-FIRST fs-root controls
+#   (the refusal must fire with the REASON before the accepting arm passes) →
+#   per-run mutations (the gate demonstrates on every run that it can fail).
+#
+# RED support: KX_PARITY_DIST=<dir> skips the package step and installs from a
+# foreign dist — how the gate is run against TODAY'S published release or an
+# origin/main build to show it goes red on the incident it exists to catch.
+# PASSED ≠ EXECUTED: every assertion increments a counter and the final PASS
+# line refuses to print unless the expected number actually ran.
+verify-release-parity:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    cd "$ROOT"
+
+    # ---- assertion bookkeeping (PASSED ≠ EXECUTED) --------------------------
+    ASSERTS=0
+    # The package arm contributes 2 assertions; a foreign dist (KX_PARITY_DIST, the
+    # RED-support path) skips them, so the census is decremented there rather than
+    # reporting a truthful run as "an arm silently did not run".
+    EXPECTED_ASSERTS=22
+    [ -n "${KX_PARITY_DIST:-}" ] && EXPECTED_ASSERTS=20
+    pass() { ASSERTS=$((ASSERTS + 1)); echo " ✓ [$ASSERTS] $*"; }
+    fail() { echo " ✗ FAIL: $*" >&2; exit 1; }
+
+    # ---- host triple (naming label; mirrors install.sh's detection) ---------
+    case "$(uname -s)-$(uname -m)" in
+        Linux-x86_64) TRIPLE="x86_64-unknown-linux-gnu" ;;
+        Linux-aarch64 | Linux-arm64) TRIPLE="aarch64-unknown-linux-gnu" ;;
+        Darwin-arm64) TRIPLE="aarch64-apple-darwin" ;;
+        *) fail "unsupported host $(uname -s)-$(uname -m)" ;;
+    esac
+
+    WORK="$(mktemp -d)"
+    SERVE_PID=""; STUB_PID=""; HTTP_PID=""
+    # ⚠ kill the PLAIN pid, never `kill -- -$PID`: a `&` child of a non-interactive
+    # bash script is NOT a process-group leader, so the group form fails and the
+    # serve SURVIVES — an orphan holding loopback listeners against a state dir this
+    # trap just deleted, which is the stale-serve/false-identity hazard.
+    cleanup() {
+        [ -n "$SERVE_PID" ] && { kill "$SERVE_PID" 2>/dev/null || true; wait "$SERVE_PID" 2>/dev/null || true; }
+        [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null || true
+        [ -n "$HTTP_PID" ] && kill "$HTTP_PID" 2>/dev/null || true
+        rm -rf "$WORK"
+    }
+    trap cleanup EXIT
+
+    free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
+    sha_of() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
+
+    # ---- preflights: kill the pass-while-absent channels --------------------
+    # Ambient KX_MCP_*_PATH overrides or a populated /usr/local/libexec/kx would
+    # register capabilities from OUTSIDE the installed artefact and green the
+    # gate while the packaging is broken — refuse to certify in that state.
+    for v in KX_MCP_ECHO_PATH KX_MCP_CALC_PATH KX_MCP_KV_PATH KX_SCRIPT_RUNNER_PATH; do
+        [ -z "${!v:-}" ] || fail "ambient $v is set — unset it; it would shadow the installed artefact"
+    done
+    if ls /usr/local/libexec/kx/kx-mcp-* >/dev/null 2>&1; then
+        fail "/usr/local/libexec/kx contains kx-mcp bins — the in-image path would shadow the installed artefact"
+    fi
+    pass "preflight — no ambient override can shadow the installed artefact"
+
+    # ---- [1] package (or take a foreign dist for a RED run) -----------------
+    DIST="$WORK/dist"
+    if [ -n "${KX_PARITY_DIST:-}" ]; then
+        echo "· KX_PARITY_DIST set — installing from foreign dist: $KX_PARITY_DIST"
+        DIST="$KX_PARITY_DIST"
+    else
+        bash scripts/package-release.sh "$TRIPLE" "$DIST"
+        # Mirror the publish job's checksums.txt assembly (release.yml gathers the
+        # per-target sidecars into one manifest; install.sh reads THE MANIFEST).
+        ( cd "$DIST" && cat kx-*.sha256 > checksums.txt )
+        pass "package-release.sh produced the full artefact set for $TRIPLE"
+        # Workflow-drift tripwire: the tag must run the SAME script this gate just
+        # ran, and the old inline packaging must not have crept back.
+        grep -q 'scripts/package-release.sh' .github/workflows/release.yml \
+            || fail "release.yml no longer invokes scripts/package-release.sh — the gate and the tag have diverged"
+        if grep -qE 'cp target/release/kx ' .github/workflows/release.yml; then
+            fail "release.yml carries inline packaging again — move it back into scripts/package-release.sh"
+        fi
+        pass "release.yml packages via the same script this gate executed"
+    fi
+    # The production default of the installer's URL seam must be intact — the
+    # override exists for THIS gate, never to redirect a real install.
+    grep -q 'https://github.com/\$REPO/releases' scripts/install.sh \
+        || fail "install.sh's default GitHub base URL literal is gone"
+    pass "install.sh production URL default intact"
+
+    # ---- [2] install via the REAL installer, over loopback ------------------
+    HTTP_PORT="$(free_port)"
+    ( cd "$DIST" && exec python3 -m http.server "$HTTP_PORT" --bind 127.0.0.1 ) >/dev/null 2>&1 &
+    HTTP_PID=$!
+    disown "$HTTP_PID"
+    for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$HTTP_PORT/" >/dev/null 2>&1 && break; sleep 0.2; done
+
+    HOME1="$WORK/home1"; INSTALL_DIR="$HOME1/.local/bin"
+    mkdir -p "$HOME1"
+    set +e
+    env -i HOME="$HOME1" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+        KX_BASE_URL="http://127.0.0.1:$HTTP_PORT" KX_VERSION="local-parity" \
+        sh scripts/install.sh > "$WORK/install.log" 2>&1
+    INSTALL_EXIT=$?
+    set -e
+    sed 's/^/    │ /' "$WORK/install.log"
+    [ "$INSTALL_EXIT" -eq 0 ] || fail "install.sh exited $INSTALL_EXIT"
+    pass "the real scripts/install.sh completed against the served dist"
+
+    TOOL_BINS="kx-mcp-echo kx-mcp-calc kx-mcp-kv kx-connector-gmail kx-connector-discord kx-connector-slack kx-connector-notion"
+    [ -f "$INSTALL_DIR/kx" ] || fail "installed kx missing at $INSTALL_DIR/kx"
+    for b in $TOOL_BINS; do
+        [ -f "$INSTALL_DIR/$b" ] || fail "tool bin '$b' missing beside kx — the release artefact does not carry the agent's own tools"
+    done
+    pass "kx + all 7 bundled tool bins installed beside each other"
+
+    # Identity spine: dist == checksums row == installed bytes; and the binary
+    # under test is THE installed one (a pyenv shim or dev kx on PATH must never
+    # be what the assertions exercise — every invocation below is absolute).
+    DIST_SHA="$(sha_of "$DIST/kx-$TRIPLE")"
+    ROW_SHA="$(awk -v a="kx-$TRIPLE" '$2 == a {print $1}' "$DIST/checksums.txt" 2>/dev/null || true)"
+    [ -z "$ROW_SHA" ] && ROW_SHA="$(awk '{print $1}' "$DIST/kx-$TRIPLE.sha256")"
+    INST_SHA="$(sha_of "$INSTALL_DIR/kx")"
+    [ "$DIST_SHA" = "$ROW_SHA" ] || fail "dist kx sha != checksum row ($DIST_SHA vs $ROW_SHA)"
+    [ "$DIST_SHA" = "$INST_SHA" ] || fail "installed kx sha != packaged sha ($INST_SHA vs $DIST_SHA)"
+    KX="$INSTALL_DIR/kx"
+    pass "identity spine — packaged, checksummed and installed kx are the same bytes"
+
+    # ---- [3] the digest triple, ON THE INSTALLED BINARY ---------------------
+    # Same canonical digest verify-quickstart pins (justfile CANON) — until this
+    # gate, the RELEASED binary's own run/replay/digest path was gated nowhere.
+    CANON="7d22d4bdfc6f68a4311f40b20f3fe7c67f4c5d2b352f3bff8722b439e94a5af9"
+    J="$WORK/dg/kx.db"; C="$WORK/dg/content"; mkdir -p "$WORK/dg"
+    RUN_OUT="$("$KX" run --journal "$J" --content "$C" 2>"$WORK/dg/run.err")"
+    [ "${RUN_OUT%% *}" = "$CANON" ] || fail "installed-binary clean-run digest ${RUN_OUT%% *} != $CANON"
+    rm -f "$J"; rm -rf "$C"
+    set +e; "$KX" run --journal "$J" --content "$C" --crash-at post-commit-vtc >/dev/null 2>&1; set -e
+    REPLAY_OUT="$("$KX" replay --journal "$J" --content "$C" 2>>"$WORK/dg/run.err")"
+    [ "${REPLAY_OUT%% *}" = "$CANON" ] || fail "installed-binary replay digest != $CANON"
+    pass "digest triple (clean run + crash-then-replay) on the INSTALLED binary"
+
+    # ---- [4] every bundled tool bin answers its wire protocol directly ------
+    # calc/kv are autogrant-gated on a serve, so the gate proves the PACKAGED
+    # binaries themselves: one deterministic JSON-RPC round-trip each.
+    ECHO_OUT="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"q":"parity"}}}' | "$INSTALL_DIR/kx-mcp-echo")"
+    echo "$ECHO_OUT" | grep -q '"echoed":{"q":"parity"}' || fail "kx-mcp-echo round-trip: $ECHO_OUT"
+    CALC_OUT="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"calc","arguments":{"op":"add","a":2,"b":3}}}' | "$INSTALL_DIR/kx-mcp-calc")"
+    echo "$CALC_OUT" | grep -q '5' || fail "kx-mcp-calc round-trip: $CALC_OUT"
+    KV_OUT="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get","arguments":{"key":"alpha"}}}' | "$INSTALL_DIR/kx-mcp-kv")"
+    [ -n "$KV_OUT" ] || fail "kx-mcp-kv answered nothing"
+    pass "kx-mcp-echo / calc / kv answer deterministic stdio round-trips"
+    for c in gmail discord slack notion; do
+        OUT="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | "$INSTALL_DIR/kx-connector-$c")"
+        echo "$OUT" | grep -q '"tools"' || fail "kx-connector-$c tools/list: $OUT"
+    done
+    pass "all four connectors answer tools/list without credentials (lazy-credential contract)"
+
+    # ---- [5] serve arms against the stub Ollama -----------------------------
+    STUB_PORT="$(free_port)"; GRPC_PORT="$(free_port)"; WS_PORT="$(free_port)"; CONSOLE_PORT="$(free_port)"
+    STUB_TAG="kx-stub-model:latest"
+    python3 scripts/stub-ollama.py "$STUB_PORT" "$STUB_TAG" > "$WORK/stub.log" 2>&1 &
+    STUB_PID=$!
+    disown "$STUB_PID"
+    for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$STUB_PORT/api/version" >/dev/null 2>&1 && break; sleep 0.2; done
+    curl -fsS "http://127.0.0.1:$STUB_PORT/api/tags" | grep -q "$STUB_TAG" \
+        || fail "stub Ollama does not list its own tag — the model leg would fail for the wrong reason"
+    pass "stub Ollama up and listing the pinned tag (the failure below cannot be 'daemon absent')"
+
+    HOME2="$WORK/home2"; mkdir -p "$HOME2"
+    ENDPOINT="http://127.0.0.1:$GRPC_PORT"
+    serve_env_common="HOME=$HOME2 PATH=/usr/bin:/bin:/usr/sbin:/sbin KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_URL=http://127.0.0.1:$STUB_PORT KX_SERVE_OLLAMA_MODELS=$STUB_TAG"
+
+    start_serve() { # $1 = extra env assignments (may be empty)
+        # shellcheck disable=SC2086
+        env -i $serve_env_common $1 \
+            "$KX" serve --dev-allow-local \
+                --listen "127.0.0.1:$GRPC_PORT" --ws-listen "127.0.0.1:$WS_PORT" \
+                --console-listen "127.0.0.1:$CONSOLE_PORT" \
+            > "$WORK/serve.log" 2>&1 &
+        SERVE_PID=$!
+        for _ in $(seq 1 90); do
+            "$KX" health --endpoint "$ENDPOINT" >/dev/null 2>&1 && return 0
+            kill -0 "$SERVE_PID" 2>/dev/null || { sed 's/^/    │ /' "$WORK/serve.log" >&2; fail "serve died before SERVING"; }
+            sleep 1
+        done
+        sed 's/^/    │ /' "$WORK/serve.log" >&2
+        fail "serve never reached SERVING within 90s"
+    }
+    stop_serve() {
+        kill "$SERVE_PID" 2>/dev/null || true
+        wait "$SERVE_PID" 2>/dev/null || true
+        SERVE_PID=""
+        # The listener-identity control: after OUR teardown the port must refuse —
+        # a survivor here means the assertions above interrogated a FOREIGN serve.
+        if "$KX" health --endpoint "$ENDPOINT" >/dev/null 2>&1; then
+            fail "a listener still answers on $ENDPOINT after teardown — foreign serve, proof invalid"
+        fi
+    }
+
+    # -- [5a] NEGATIVE FIRST (fresh home, no FS root): the refusal must fire --
+    # Ordering is load-bearing: tools.db is durable and fs-list@1, once seeded,
+    # never deregisters — an accepting run first would bleed the row forward and
+    # the refusal would never fire (the control would be dead).
+    start_serve ""
+    "$KX" models list --endpoint "$ENDPOINT" 2>/dev/null | grep -q "$STUB_TAG" \
+        || fail "serve did not resolve the stub model — every later assertion would fail for the wrong reason"
+    pass "serve resolved the pinned stub model (the model leg of every capability gate)"
+
+    "$KX" tools list --endpoint "$ENDPOINT" > "$WORK/tools-neg.txt" 2>&1 || true
+    grep -q 'mcp-echo/echo' "$WORK/tools-neg.txt" || { cat "$WORK/tools-neg.txt"; fail "mcp-echo/echo did not register (bundled bin not resolved beside installed kx)"; }
+    ! grep -q 'fs-list' "$WORK/tools-neg.txt" || fail "fs-list registered WITHOUT KX_SERVE_FS_ROOT — the negative arm's premise is broken"
+    pass "echo capability registered from the installed artefact; fs tools absent without their root"
+
+    set +e
+    CHAT_NEG="$(env -i HOME="$HOME2" PATH="/usr/bin:/bin" "$KX" chat --tools 'fs-list@1,fs-read@1' \
+        --message 'Find the quarterly notes and tell me what the two incidents were.' \
+        --endpoint "$ENDPOINT" --timeout-secs 30 2>&1)"
+    set -e
+    echo "$CHAT_NEG" | grep -q 'references unregistered tool fs-list@1' \
+        || fail "the loud bind-time refusal did not fire on a rootless serve — got: $CHAT_NEG"
+    echo "$CHAT_NEG" | grep -qi 'InvalidArgument' \
+        || fail "refusal fired without the InvalidArgument code — wrong failure class: $CHAT_NEG"
+    pass "negative control — README headline chat refused with the REASON (unregistered fs-list@1)"
+    stop_serve
+    pass "post-kill control — the negative serve's listener was ours and is gone"
+
+    # -- [5b] ACCEPTING (same home, ONE variable added: KX_SERVE_FS_ROOT) -----
+    FSROOT="$WORK/fsroot"; mkdir -p "$FSROOT"
+    NONCE="parity-$(date +%s)-$$"
+    printf 'quarterly notes: incident one was %s; incident two was a disk failure.\n' "$NONCE" > "$FSROOT/quarterly-notes.txt"
+    start_serve "KX_SERVE_FS_ROOT=$FSROOT"
+
+    "$KX" tools list --endpoint "$ENDPOINT" > "$WORK/tools-acc.txt" 2>&1 || true
+    for t in 'mcp-echo/echo' 'fs-list' 'fs-read'; do
+        grep -q "$t" "$WORK/tools-acc.txt" || { cat "$WORK/tools-acc.txt"; fail "tool '$t' missing from the accepting serve"; }
+    done
+    # NB: no fs-write assertion here. `tools list` shows DURABLE tools.db ROWS, and
+    # the fs-write ROW is seeded unconditionally while its CAPABILITY is gated on
+    # KX_SERVE_FS_WRITE_ROOT — which the env scrub above guarantees unset, so the
+    # write capability cannot be live in this serve. (That rows-vs-capabilities
+    # asymmetry — fs-list/fs-read rows are root-conditioned, fs-write's is not —
+    # is a runtime catalog-honesty item, not this gate's subject.)
+    pass "accepting serve — fs tools joined the registry (one-variable control vs the negative arm)"
+
+    # Bind witness: no-wait invoke binds server-side and returns the handle with
+    # ZERO generation — the crisp seeding proof (`react_supported` would lie).
+    # Full declared-slot args (instruction + both caps — the same trio the agent
+    # verb always sends): a MissingRequired here would be a bind-STAGE failure,
+    # not a seeding failure (an unseeded handle reads PermissionDenied instead).
+    "$KX" invoke kx/recipes/react --args '{"instruction":"noop","max_turns":1,"max_tool_calls":1}' --endpoint "$ENDPOINT" \
+        > "$WORK/invoke.txt" 2>&1 || { cat "$WORK/invoke.txt"; fail "kx/recipes/react did not bind — the recipe was not seeded"; }
+    pass "kx/recipes/react seeded and BINDS (no-wait invoke returned a handle)"
+
+    set +e
+    CHAT_ACC="$(env -i HOME="$HOME2" PATH="/usr/bin:/bin" "$KX" chat --tools 'fs-list@1,fs-read@1' \
+        --message 'Find the quarterly notes and tell me what the two incidents were.' \
+        --endpoint "$ENDPOINT" --timeout-secs 30 2>&1)"
+    CHAT_ACC_EXIT=$?
+    set -e
+    echo "$CHAT_ACC" | grep -q 'references unregistered tool' \
+        && fail "the refusal fired on the ACCEPTING serve — the one-variable control is broken"
+    pass "README headline chat passed BIND on the accepting serve (refusal absent; generation not asserted — stub)"
+
+    CONSOLE_SHA="$(curl -fsS "http://127.0.0.1:$CONSOLE_PORT/" | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; } | awk '{print $1}')"
+    UI_SHA="$(sha_of ui/dist/index.html)"
+    [ "$CONSOLE_SHA" = "$UI_SHA" ] || fail "served console bytes != ui/dist/index.html — a stale embed (a bare 200 would have hidden this)"
+    pass "console served from the installed binary IS the freshly built ui/dist (byte match)"
+
+    # env -i like the chat arms: `connections doctor` resolves sibling-of-exe OR PATH,
+    # so an ambient cargo-installed connector would mask a missing sibling (and defeat
+    # the mutation control below). The sibling probe still works — it derives from the
+    # binary's own path, not from PATH.
+    env -i HOME="$HOME2" PATH="/usr/bin:/bin" "$KX" connections doctor --endpoint "$ENDPOINT" > "$WORK/doctor.txt" 2>&1 || true
+    for c in gmail discord slack notion; do
+        grep -qE "kx-connector-$c" "$WORK/doctor.txt" || { cat "$WORK/doctor.txt"; fail "doctor does not mention kx-connector-$c"; }
+    done
+    grep -qi 'NOT FOUND' "$WORK/doctor.txt" && { cat "$WORK/doctor.txt"; fail "doctor reports a connector missing on a fresh install"; }
+    pass "connections doctor — all four bundled connectors resolvable beside the installed kx"
+
+    # -- [5c] per-run mutation: the gate must be able to FAIL, every run ------
+    mv "$INSTALL_DIR/kx-connector-notion" "$WORK/kx-connector-notion.aside"
+    env -i HOME="$HOME2" PATH="/usr/bin:/bin" "$KX" connections doctor --endpoint "$ENDPOINT" > "$WORK/doctor-mut.txt" 2>&1 || true
+    grep -qi 'NOT FOUND' "$WORK/doctor-mut.txt" \
+        || fail "removing a connector did NOT turn doctor red — the doctor assertion cannot fail"
+    mv "$WORK/kx-connector-notion.aside" "$INSTALL_DIR/kx-connector-notion"
+    pass "mutation control — a removed connector turns the oracle red (sensitivity proven this run)"
+    stop_serve
+    pass "post-kill control — the accepting serve's listener was ours and is gone"
+
+    echo ""
+    if [ "$ASSERTS" -ne "$EXPECTED_ASSERTS" ]; then
+        fail "executed $ASSERTS assertions, expected $EXPECTED_ASSERTS — an arm silently did not run"
+    fi
+    echo " ✓ verify-release-parity PASS — $ASSERTS/$EXPECTED_ASSERTS assertions executed:"
+    echo "   the RELEASED artefact installs, carries its 7 tool bins, reproduces the"
+    echo "   canonical digest, registers its capabilities, seeds kx/recipes/react,"
+    echo "   and BINDS the README's headline agentic command."
+
+# verify-release-live — the LIVE half of the parity proof: the same installed
+# artefact driven end to end against a REAL Ollama daemon and a REAL model,
+# asserting the tool ACTUALLY FIRED (a per-run nonce planted in the FS-root
+# fixture must surface in the model's answer, and `kx agent run --json` must
+# report a tool action). Local-only: needs Ollama + the pinned model + the model
+# lease (scripts/model-lease.sh). Never run in CI.
+#   KX_LIVE_MODEL   the exact daemon tag (default gemma4:12b)
+#   KX_LIVE_EMBED   stated beside results (default embeddinggemma:latest)
+verify-release-live:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    cd "$ROOT"
+    MODEL="${KX_LIVE_MODEL:-gemma4:12b}"
+    EMBED="${KX_LIVE_EMBED:-embeddinggemma:latest}"
+    LEASE="bash scripts/model-lease.sh"
+    fail() { echo " ✗ FAIL: $*" >&2; exit 1; }
+
+    command -v ollama >/dev/null 2>&1 || fail "ollama not on PATH (this is the LIVE arm — run verify-release-parity for the hermetic gate)"
+    curl -fsS http://127.0.0.1:11434/api/tags | grep -q "\"$MODEL\"" \
+        || fail "Ollama daemon does not list $MODEL — pull it first (the failure must name the absent thing)"
+
+    $LEASE acquire --label release-live --purpose verify-release-live --wait --timeout 600 >/dev/null \
+        || fail "could not acquire the model lease"
+    WORK="$(mktemp -d)"
+    SERVE_PID=""; HTTP_PID=""
+    # ⚠ plain pid, not `kill -- -$PID` — see the note in verify-release-parity: the
+    # group form silently fails and leaves a live serve behind on EVERY run.
+    cleanup() {
+        [ -n "$SERVE_PID" ] && { kill "$SERVE_PID" 2>/dev/null || true; wait "$SERVE_PID" 2>/dev/null || true; }
+        [ -n "$HTTP_PID" ] && kill "$HTTP_PID" 2>/dev/null || true
+        $LEASE release --label release-live >/dev/null 2>&1 || true
+        rm -rf "$WORK"
+    }
+    trap cleanup EXIT
+
+    free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
+
+    # Package + install exactly like the hermetic gate (or reuse its dist).
+    case "$(uname -s)-$(uname -m)" in
+        Linux-x86_64) TRIPLE="x86_64-unknown-linux-gnu" ;;
+        Linux-aarch64 | Linux-arm64) TRIPLE="aarch64-unknown-linux-gnu" ;;
+        Darwin-arm64) TRIPLE="aarch64-apple-darwin" ;;
+        *) fail "unsupported host $(uname -s)-$(uname -m)" ;;
+    esac
+    DIST="${KX_PARITY_DIST:-$WORK/dist}"
+    if [ ! -d "$DIST" ]; then
+        bash scripts/package-release.sh "$TRIPLE" "$DIST"
+        # Mirror the publish job's checksums.txt assembly (install.sh reads THE MANIFEST).
+        ( cd "$DIST" && cat kx-*.sha256 > checksums.txt )
+    fi
+    HTTP_PORT="$(free_port)"
+    ( cd "$DIST" && exec python3 -m http.server "$HTTP_PORT" --bind 127.0.0.1 ) >/dev/null 2>&1 &
+    HTTP_PID=$!
+    disown "$HTTP_PID"
+    sleep 1
+    HOME1="$WORK/home"; INSTALL_DIR="$HOME1/.local/bin"; mkdir -p "$HOME1"
+    env -i HOME="$HOME1" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+        KX_BASE_URL="http://127.0.0.1:$HTTP_PORT" KX_VERSION="local-live" \
+        sh scripts/install.sh || fail "install.sh failed"
+    KX="$INSTALL_DIR/kx"
+
+    GRPC_PORT="$(free_port)"; WS_PORT="$(free_port)"; CONSOLE_PORT="$(free_port)"
+    ENDPOINT="http://127.0.0.1:$GRPC_PORT"
+    FSROOT="$WORK/fsroot"; mkdir -p "$FSROOT"
+    NONCE="live-$(date +%s)-$$"
+    printf 'quarterly notes: incident one was %s; incident two was a disk failure.\n' "$NONCE" > "$FSROOT/quarterly-notes.txt"
+
+    env -i HOME="$HOME1" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+        KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS="$MODEL" KX_SERVE_FS_ROOT="$FSROOT" \
+        KX_SERVE_EMBED_MODEL="$EMBED" \
+        "$KX" serve --dev-allow-local \
+            --listen "127.0.0.1:$GRPC_PORT" --ws-listen "127.0.0.1:$WS_PORT" \
+            --console-listen "127.0.0.1:$CONSOLE_PORT" > "$WORK/serve.log" 2>&1 &
+    SERVE_PID=$!
+    for _ in $(seq 1 120); do
+        "$KX" health --endpoint "$ENDPOINT" >/dev/null 2>&1 && break
+        kill -0 "$SERVE_PID" 2>/dev/null || { cat "$WORK/serve.log" >&2; fail "serve died"; }
+        sleep 1
+    done
+    "$KX" health --endpoint "$ENDPOINT" >/dev/null 2>&1 || fail "serve never reached SERVING"
+
+    echo "== README headline chat, VERBATIM (binary: installed release artefact;"
+    echo "   features console,hnsw,serve-engine,hosted-apps; engine Ollama; model $MODEL; embedder $EMBED)"
+    CHAT_OUT="$("$KX" chat --tools 'fs-list@1,fs-read@1' \
+        --message 'Find the quarterly notes and tell me what the two incidents were.' \
+        --endpoint "$ENDPOINT" --timeout-secs 300)" || fail "README headline chat failed — see $WORK/serve.log"
+    printf '%s\n' "$CHAT_OUT" | sed 's/^/    │ /'
+    printf '%s\n' "$CHAT_OUT" | grep -q "$NONCE" \
+        || fail "the answer does not contain the planted nonce — the fs tool cannot have fired"
+    echo " ✓ the model's answer carries the per-run nonce — fs-read FIRED on real content"
+
+    AGENT_OUT="$("$KX" agent run --goal 'Echo the word parity back to me using your tool.' \
+        --endpoint "$ENDPOINT" --timeout-secs 300 --json)" || fail "kx agent run failed"
+    printf '%s\n' "$AGENT_OUT" | sed 's/^/    │ /'
+    printf '%s\n' "$AGENT_OUT" | grep -q '"actions"' || fail "agent run reported no actions field"
+    printf '%s\n' "$AGENT_OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("actions"), "empty actions — no tool fired"' \
+        || fail "the agent's audited action set is EMPTY — no tool fired"
+    echo " ✓ kx agent run — the audited action set is non-empty (the tool actually fired)"
+    echo ""
+    echo " ✓ verify-release-live PASS — installed release artefact · Ollama · $MODEL · embedder $EMBED"
 
 # ============================================================================
 # Container (Docker / OCI) recipes

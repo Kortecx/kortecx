@@ -1000,11 +1000,13 @@ kx datasets ingest <name> (--text <s> | --file <path>)... [client flags]
 kx datasets query <name> --text <query> [--k N] [client flags]
   The RAG data-plane (T3.7): browse / populate / search content-addressed vector
   corpora. `ingest` adds documents (created on first ingest); the CLI uses the
-  SERVER-EMBED path, so it needs `kx serve --features inference` with a model
-  (else FAILED_PRECONDITION) — the client-vector (FFI-free) path is an SDK surface.
-  `query` returns top-k hits; each `score` is DISPLAY-ONLY, a ranking aid
-  never an identity input. The store is APPEND-ONLY + content-dedup (no delete).
-  A pre-T3.7 / `hnsw`-less gateway answers Unimplemented (run `kx serve --features hnsw`)."
+  SERVER-EMBED path, so the serve needs an embed-capable model — either engine
+  will do (the prebuilt binary embeds through Ollama; set KX_SERVE_EMBED_MODEL),
+  else FAILED_PRECONDITION — and the client-vector (FFI-free) path is an SDK
+  surface. `query` returns top-k hits; each `score` is DISPLAY-ONLY, a ranking
+  aid never an identity input. The store is APPEND-ONLY + content-dedup (no
+  delete). A pre-T3.7 gateway or one BUILT without the `hnsw` cargo feature
+  answers Unimplemented (the prebuilt release binary has it)."
             .into(),
         "memory" => "\
 kx memory add <text> [--kind semantic|episodic] [client flags]

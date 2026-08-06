@@ -56,9 +56,11 @@
 //! reach it the same way across every surface (one chaining entry point):
 //!
 //! ```text
-//! # CLI (operator)
-//! kx connections add --name fs --command "npx -y @modelcontextprotocol/server-filesystem /data"
-//! kx agent run --goal "list /data" --tools fs/list_directory
+//! # CLI (operator). `--command` is ONE program path (spawned directly, no shell,
+//! # no word-splitting); every argument is its own `--arg`.
+//! kx connections add --name fs --command npx \
+//!     --arg -y --arg @modelcontextprotocol/server-filesystem --arg /data
+//! kx chat --tools 'fs/list_directory@1' --message "List what is in /data."
 //!
 //! # Python / TypeScript SDK (the single chaining entry point)
 //! flow().with_mcp("fs", transport="stdio", endpoint="npx", \

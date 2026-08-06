@@ -285,7 +285,19 @@ pub(crate) fn register_fs_write_capability<S: ContentStore + Send + Sync>(
 pub(crate) fn register_echo_capability<S: ContentStore + Send + Sync>(
     broker: &LocalCapabilityBroker<S>,
 ) -> Option<(ToolName, ToolVersion)> {
-    let path = echo_binary_path()?;
+    let Some(path) = echo_binary_path() else {
+        // Mirror the script-shim's loud absence (scripts::provision_shim): without
+        // this line the only boot-time signal that the react recipe is dead is the
+        // ABSENCE of the success log, and `kx agent run` later fails as an opaque
+        // PermissionDenied.
+        tracing::warn!(
+            bin = "kx-mcp-echo",
+            "bundled stdio tool binary not found — mcp-echo/echo will not register and \
+             kx/recipes/react will not be provisioned (install the kx-tools bundle beside \
+             `kx`, or set KX_MCP_ECHO_PATH)"
+        );
+        return None;
+    };
     let (tool_id, tool_version) = echo_tool();
     broker.register_capability(Box::new(McpCapability::new(
         tool_id.clone(),
@@ -439,9 +451,11 @@ pub(crate) fn react_system_override() -> Option<String> {
 }
 
 /// Resolve a bundled MCP tool binary's path: an explicit `env_override` var
-/// first, then the fixed in-image path, then a dev/test walk up to the workspace
-/// `target/` dir (the `real_body_binary_path` precedent). `None` ⇒ no binary on
-/// this host/image (fail-soft). Shared by every bundled stdio tool.
+/// first, then the fixed in-image path, then a sibling of the running executable
+/// (the installed case — `install.sh` unpacks the tool bins beside `kx`), then a
+/// dev/test walk up to the workspace `target/` dir (the `real_body_binary_path`
+/// precedent). `None` ⇒ no binary on this host/image (fail-soft). Shared by
+/// every bundled stdio tool.
 use crate::real_exec::bundled_binary_path;
 
 /// The bundled echo binary's path (`KX_MCP_ECHO_PATH` override).
@@ -580,6 +594,12 @@ pub(crate) fn register_oracle_capabilities<S: ContentStore + Send + Sync>(
         ),
     ] {
         let Some(path) = bundled_binary_path(bin, env_override) else {
+            tracing::warn!(
+                bin,
+                "bundled oracle tool binary not found — its capability will not register \
+                 and react-auto loses this arm of its multi-tool grant (install the \
+                 kx-tools bundle beside `kx`, or set the {env_override} override)"
+            );
             continue;
         };
         let def = def_fn();
