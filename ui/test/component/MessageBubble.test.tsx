@@ -7,6 +7,20 @@ import type { ChatMessage } from "../../src/lib/chat-thread";
 vi.mock("../../src/kx/use-feedback", () => ({
   useFeedback: () => ({ mutate: vi.fn(), isError: false, error: null }),
 }));
+// The action row also links to the run behind the answer. `Link` needs a router; the
+// established pattern in this suite is to stub the module (see run-scope.test.tsx) and
+// serialize `search` onto the anchor so the SCOPE is assertable, not just the target.
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ to, search, children, ...rest }: Record<string, unknown> & { children?: unknown }) => (
+    <a
+      href={typeof to === "string" ? to : "#"}
+      data-search={JSON.stringify(search ?? {})}
+      {...rest}
+    >
+      {children as never}
+    </a>
+  ),
+}));
 
 import { MessageBubble } from "../../src/components/chat/MessageBubble";
 
@@ -137,5 +151,40 @@ describe("MessageBubble", () => {
     expect(md).toHaveTextContent("final answer");
     expect(md).not.toHaveAttribute("data-streaming");
     expect(screen.queryByTestId("bubble-reasoning-stream")).toBeNull();
+  });
+});
+
+/**
+ * An answer IS a run. Chat held both anchor halves on every assistant message and
+ * passed them only to RPCs, so the console's landing surface was the one place you
+ * could not open the thing you were looking at. The mechanism was already shared —
+ * `runViewSearch` — and twelve other surfaces used it.
+ */
+describe("MessageBubble — opening the run behind an answer", () => {
+  const anchored = {
+    role: "assistant" as const,
+    status: "done" as const,
+    text: "the answer",
+    instanceId: "ab".repeat(16),
+    terminalMoteId: "ee".repeat(32),
+  };
+
+  it("a settled answer with an anchor links to its own run, scoped", () => {
+    render(<MessageBubble message={msg(anchored)} />);
+    const link = screen.getByTestId("msg-open-run");
+    expect(link).toBeInTheDocument();
+    // Scoped, not just "the run view": without the anchor the view shows the whole
+    // journal, and one `kx serve` shares an instance id across every submission.
+    expect(link.getAttribute("data-search")).toContain("ee".repeat(32));
+  });
+
+  it("an answer with NO anchor offers no link rather than an unscoped one", () => {
+    render(<MessageBubble message={msg({ ...anchored, terminalMoteId: undefined })} />);
+    expect(screen.queryByTestId("msg-open-run")).not.toBeInTheDocument();
+  });
+
+  it("an unsettled answer offers no link (there is nothing settled to open)", () => {
+    render(<MessageBubble message={msg({ ...anchored, status: "thinking" })} />);
+    expect(screen.queryByTestId("msg-open-run")).not.toBeInTheDocument();
   });
 });

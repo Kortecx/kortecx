@@ -813,8 +813,15 @@ jobs:
 
       # ubuntu-latest ships Docker + BuildKit. The script builds the image and drives
       # run → crash → replay → digest in-container, asserting the canonical digest.
+      # The census line is grepped rather than trusted: this job was green for months
+      # while executing nothing, so a zero exit is not on its own evidence that any
+      # assertion ran. PASSED ≠ EXECUTED.
       - name: just docker-smoke
-        run: just docker-smoke
+        run: |
+          set -euo pipefail
+          just docker-smoke 2>&1 | tee smoke.log
+          grep -qE 'docker-smoke PASS: [0-9]+/[0-9]+ assertions executed' smoke.log \
+            || { echo "::error::docker-smoke produced no assertion census — it ran nothing"; exit 1; }
   # `kx` (serve + client), checks the vendored protobuf stubs are still fresh
   # against the FROZEN proto (codegen-fresh), then runs ruff + mypy + the unit and
   # contract-e2e suites (which spin up a real `kx serve` and compare the SDK's
@@ -1021,7 +1028,7 @@ jobs:
         working-directory: ui
         run: npm run build
 
-      - name: Eager-JS bundle gate (entry + modulepreload ≤ 685 KiB)
+      - name: Eager-JS bundle gate (entry + modulepreload ≤ 688 KiB)
         working-directory: ui
         run: npm run size
 

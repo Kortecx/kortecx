@@ -1,6 +1,6 @@
 /** Builders for `Projection` / `MoteView` (the real SDK classes) used by tests. */
 
-import { MoteView, ParentEdge, Projection } from "@kortecx/sdk/web";
+import { MoteView, ParentEdge, Projection, ReactTurn } from "@kortecx/sdk/web";
 
 let counter = 0;
 
@@ -162,4 +162,125 @@ export function cycleProjection(): Projection {
     mote({ moteId: nid(0), parents: [{ parentId: nid(1) }] }),
     mote({ moteId: nid(1), parents: [{ parentId: nid(0) }] }),
   ]);
+}
+
+// ---- ReAct / agentic topologies (W2) ----------------------------------------
+//
+// WHY THESE EXIST. Every multi-node fixture above is ONE connected component, so
+// nothing in the suite has ever fed `scopeProjection`/`connectedComponent` the shape
+// a real agent run folds to. The coordinator registers a react TURN Mote EDGE-FREE
+// (`react_shape.rs` — `SmallVec::new()`, frozen by "a react turn MUST be edge-free")
+// because declaring parents would move the canonical digest, and a tool OBSERVATION
+// carries exactly ONE Data edge back to the turn that proposed it. So an N-turn run
+// is N DISJOINT TWO-NODE STARS, and an undirected walk from any anchor reaches one
+// star. These builders reproduce that exactly.
+
+/** The react chain SALT — the seed Mote the coordinator validates and then DISCARDS.
+ *  It is deliberately absent from every projection below: that is the whole point. */
+export const REACT_SEED = nid(0x5eed);
+/** The ADMITTED agentic launch Mote (the `kx chat --tools` / SubmitWorkflow shape).
+ *  The loop's answer commits onto THIS Mote, which is why the answer turn must not
+ *  also be rendered — the same bytes would appear twice. */
+export const REACT_LAUNCH = nid(0x300);
+/** The run-salted turn Mote for turn `k`. */
+export const turnId = (k: number): string => nid(0x100 + k);
+/** The observation Mote for turn `k`'s tool call (single Data edge → its turn). */
+export const obsId = (k: number): string => nid(0x200 + k);
+/** The content ref the answer's bytes live at. */
+export const ANSWER_REF = "aa".repeat(32);
+
+export interface ReactChainOpts {
+  /** How many turns the chain HAS (turn 0 .. turns-1; the last one answers). */
+  turns: number;
+  /** Mid-poll frontier: how many turn Motes have actually LANDED in the fold.
+   *  Defaults to all of them (a settled run). */
+  presentTurns?: number;
+  /** Add the admitted launch Mote carrying the answer bytes (the `chat --tools` shape). */
+  launch?: boolean;
+  /** Turn indices whose Motes are absent from the fold (a hole in the middle). */
+  absentTurns?: readonly number[];
+}
+
+/**
+ * A REACT-SHAPED fold: `turns` edge-free turn Motes, each non-answering turn carrying
+ * ONE observation whose single Data parent is that turn. No edge joins turn k to
+ * turn k+1 — the runtime records none.
+ */
+export function reactChainProjection(opts: ReactChainOpts): Projection {
+  const total = opts.turns;
+  const present = opts.presentTurns ?? total;
+  const absent = new Set(opts.absentTurns ?? []);
+  const motes: MoteView[] = [];
+  if (opts.launch) {
+    // The launch step is admitted and the loop's answer commits onto it.
+    motes.push(mote({ moteId: REACT_LAUNCH, stateCode: 3, resultRef: ANSWER_REF }));
+  }
+  for (let k = 0; k < total; k += 1) {
+    if (k >= present || absent.has(k)) {
+      continue; // not at this frontier yet
+    }
+    const answers = k === total - 1;
+    motes.push(
+      mote({
+        moteId: turnId(k),
+        stateCode: 3,
+        parents: [], // EDGE-FREE — the defect's root cause, reproduced faithfully
+        resultRef: answers && !opts.launch ? ANSWER_REF : null,
+      }),
+    );
+    if (!answers) {
+      motes.push(mote({ moteId: obsId(k), stateCode: 3, parents: [{ parentId: turnId(k) }] }));
+    }
+  }
+  return projection(motes, { currentSeq: motes.length });
+}
+
+export interface ReactRowsOpts {
+  turns: number;
+  /** The chain key. ⚠ Pass `""` for the UNSALTED run-level shape a real
+   *  `kx agent run` actually produces — measured live, its rows carry no key at all. */
+  stepSalt?: string;
+  /** Fan this turn into `multiToolCount` `tool` rows sharing one `turnMoteId`. */
+  multiToolAt?: number;
+  multiToolCount?: number;
+  /** Emit the last turn as still `pending` rather than `answer` (a live chain). */
+  unsettled?: boolean;
+}
+
+/**
+ * The matching `ListReactTurns` page — NEWEST-FIRST (descending seq), exactly as the
+ * wire delivers it, so a reader's dedupe/order rule is exercised for real.
+ */
+export function reactTurnRows(opts: ReactRowsOpts): { turns: ReactTurn[]; hasMore: boolean } {
+  const salt = opts.stepSalt ?? REACT_SEED;
+  let seq = 10;
+  const rows: ReactTurn[] = [];
+  for (let k = 0; k < opts.turns; k += 1) {
+    const answers = k === opts.turns - 1;
+    const branch = answers ? (opts.unsettled ? "pending" : "answer") : "tool";
+    const fan = k === opts.multiToolAt ? (opts.multiToolCount ?? 2) : 1;
+    for (let ci = 0; ci < fan; ci += 1) {
+      rows.push(
+        new ReactTurn(
+          k,
+          turnId(k),
+          "ab".repeat(16),
+          "gemma4:12b",
+          branch,
+          branch === "tool" ? "mcp-echo" : "",
+          branch === "tool" ? "1" : "",
+          8,
+          8,
+          seq++,
+          "",
+          salt,
+          ci,
+          ["mcp-echo@1"],
+          [],
+        ),
+      );
+    }
+  }
+  rows.reverse(); // newest-first, like the wire
+  return { turns: rows, hasMore: false };
 }

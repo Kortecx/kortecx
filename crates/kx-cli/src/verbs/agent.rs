@@ -204,11 +204,18 @@ async fn select_handle(
             .as_ref()
             .is_some_and(|f| f.fields.iter().any(|x| x.name == "image_ref"));
         if !has_image_slot {
-            return Err(CliError::Usage(
-                "no vision model is served — `kx agent run --image` needs an image-capable \
-                 model (set KX_SERVE_MMPROJ_GGUF for llama.cpp, or serve a vision model via Ollama)"
+            // NOT `CliError::Usage`: the invocation is well-formed — the SERVE lacks a
+            // vision model. A usage error would print the whole CLI usage block ahead
+            // of this text (`render_error`), burying the one sentence that says what to
+            // do. Same classification as the default path's form gate below.
+            return Err(CliError::Rpc {
+                code: tonic::Code::FailedPrecondition,
+                message: "no vision model is served — `kx agent run --image` needs an \
+                          image-capable model (set KX_SERVE_MMPROJ_GGUF for llama.cpp, or serve \
+                          a vision model via Ollama)"
                     .into(),
-            ));
+                refusal_code: None,
+            });
         }
         obj.insert("image_ref".to_string(), serde_json::json!(image_ref));
         eprintln!(

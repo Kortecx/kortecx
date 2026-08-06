@@ -11,6 +11,7 @@ import { stateVisual } from "../../lib/colors";
 import type { DecodedContent } from "../../lib/content-decode";
 import type { StepType } from "../../lib/step-kind";
 import { buildEdges } from "./dag-graph";
+import type { GraphEdge } from "./dag-graph";
 import { toRfEdge } from "./edges";
 import type { XY } from "./layout";
 
@@ -92,10 +93,15 @@ export function buildFlowNodes(
 }
 
 /** Styled reactflow edges from the Motes' parent links (dangling dropped). PR-B:
- *  `branchEdges` (edge ids) mark the swarm branch→gather fan-in for highlighting. */
+ *  `branchEdges` (edge ids) mark the swarm branch→gather fan-in for highlighting.
+ *  `derived` appends reader-synthesised edges (an agent's turn order, which the runtime
+ *  records off-DAG) AFTER the durable ones — they carry their own visual treatment. */
 export function buildFlowEdges(
   motes: readonly MoteVM[],
   branchEdges?: ReadonlySet<string>,
+  derived: readonly GraphEdge[] = [],
 ): Edge[] {
-  return buildEdges(motes).map((e) => toRfEdge(e, { branch: branchEdges?.has(e.id) ?? false }));
+  return [...buildEdges(motes), ...derived].map((e) =>
+    toRfEdge(e, { branch: branchEdges?.has(e.id) ?? false }),
+  );
 }

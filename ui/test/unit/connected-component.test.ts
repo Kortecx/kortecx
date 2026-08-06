@@ -8,8 +8,10 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { connectedComponent } from "../../src/components/dag/dag-graph";
+import { componentOfAny, connectedComponent } from "../../src/components/dag/dag-graph";
 import type { MoteVM } from "../../src/kx/use-projection";
+import { toProjectionVM } from "../../src/kx/use-projection";
+import { obsId, reactChainProjection, turnId } from "../mocks/projection-fixtures";
 
 function mote(id: string, parents: string[] = []): MoteVM {
   return {
@@ -82,5 +84,42 @@ describe("connectedComponent", () => {
 
   it("is empty for an empty projection", () => {
     expect(connectedComponent([], "a1")).toEqual([]);
+  });
+});
+
+describe("connectedComponent / componentOfAny — the REACT shape", () => {
+  it("a react-shaped fold collapses to a two-node star (the defect, documented)", () => {
+    // Not a regression guard — a statement of WHY the graph under-rendered. The
+    // coordinator registers each turn Mote edge-free (declaring parents would move the
+    // canonical digest), so a walk from any single anchor reaches one turn and its
+    // observation, however long the chain is.
+    const motes = toProjectionVM(reactChainProjection({ turns: 3 })).motes;
+    expect(motes).toHaveLength(5);
+    expect(connectedComponent(motes, turnId(0)).map((m) => m.moteId)).toEqual([
+      turnId(0),
+      obsId(0),
+    ]);
+  });
+
+  it("componentOfAny unions several anchors, in projection order, without duplicates", () => {
+    const motes = toProjectionVM(reactChainProjection({ turns: 3 })).motes;
+    const out = componentOfAny(motes, [turnId(0), turnId(1), turnId(2)]);
+    expect(out.map((m) => m.moteId)).toEqual([turnId(0), obsId(0), turnId(1), obsId(1), turnId(2)]);
+  });
+
+  it("componentOfAny ignores absent anchors but still scopes from the present ones", () => {
+    const motes = toProjectionVM(reactChainProjection({ turns: 2 })).motes;
+    const out = componentOfAny(motes, ["ff".repeat(32), turnId(0)]);
+    expect(out.map((m) => m.moteId)).toEqual([turnId(0), obsId(0)]);
+  });
+
+  it("componentOfAny returns EMPTY when NO anchor is present — 'cannot scope this'", () => {
+    const motes = toProjectionVM(reactChainProjection({ turns: 2 })).motes;
+    expect(componentOfAny(motes, ["ff".repeat(32), "ee".repeat(32)])).toEqual([]);
+  });
+
+  it("componentOfAny with one anchor is exactly connectedComponent", () => {
+    const motes = toProjectionVM(reactChainProjection({ turns: 3 })).motes;
+    expect(componentOfAny(motes, [turnId(1)])).toEqual(connectedComponent(motes, turnId(1)));
   });
 });

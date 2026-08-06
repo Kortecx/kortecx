@@ -794,8 +794,8 @@ verify-release-parity:
     # The package arm contributes 2 assertions; a foreign dist (KX_PARITY_DIST, the
     # RED-support path) skips them, so the census is decremented there rather than
     # reporting a truthful run as "an arm silently did not run".
-    EXPECTED_ASSERTS=22
-    [ -n "${KX_PARITY_DIST:-}" ] && EXPECTED_ASSERTS=20
+    EXPECTED_ASSERTS=23
+    [ -n "${KX_PARITY_DIST:-}" ] && EXPECTED_ASSERTS=21
     pass() { ASSERTS=$((ASSERTS + 1)); echo " ✓ [$ASSERTS] $*"; }
     fail() { echo " ✗ FAIL: $*" >&2; exit 1; }
 
@@ -856,6 +856,21 @@ verify-release-parity:
         fi
         pass "release.yml packages via the same script this gate executed"
     fi
+    # Every OTHER consumer of the published assets must read the same manifest.
+    # The publish job folds the per-asset sidecars into checksums.txt and DELETES
+    # them, so a consumer fetching `kx-<triple>.sha256` requests an asset that is
+    # not there — which is exactly how the Docker prebuilt variant broke.
+    # ⚠ The pattern is SINGLE-quoted deliberately. Written in double quotes, bash
+    # collapses `\$` to `$`, grep reads it as an end-of-line anchor mid-pattern, and
+    # the scan matches nothing — a silent green against the very file it is policing.
+    # Proven on a positive control (the broken form) before being trusted here.
+    if grep -qE 'kx-\$\{?triple\}?\.sha256' Dockerfile; then
+        fail "Dockerfile fetches a per-asset .sha256 sidecar, which the publish job deletes — read the row out of checksums.txt instead"
+    fi
+    grep -q 'checksums.txt' Dockerfile \
+        || fail "Dockerfile no longer verifies against the published checksums.txt manifest"
+    pass "the Docker prebuilt variant verifies against the SAME manifest install.sh reads"
+
     # The production default of the installer's URL seam must be intact — the
     # override exists for THIS gate, never to redirect a real install.
     grep -q 'https://github.com/\$REPO/releases' scripts/install.sh \
@@ -1205,7 +1220,19 @@ docker-build-inference:
 # and what the CI `docker-smoke` job runs. Requires a working Docker daemon. NOT
 # part of `just ci` (a separate, Docker-dependent gate — like verify-quickstart).
 docker-smoke:
-    @[ -f scripts/docker-smoke.sh ] && ./scripts/docker-smoke.sh || echo "docker-smoke: helper script not present — skipped"
+    #!/usr/bin/env bash
+    # FAIL-CLOSED. The previous form was `[ -f x ] && ./x || echo "... skipped"`, which
+    # reported success in BOTH failure modes: with the script absent (it was removed and
+    # this job stayed green while executing nothing), and — worse — with the script
+    # present and FAILING, because `||` catches a non-zero exit too and then prints
+    # "not present". A failing gate read as an absent one.
+    set -euo pipefail
+    if [ ! -f scripts/docker-smoke.sh ]; then
+        echo " ✗ scripts/docker-smoke.sh is missing — this gate cannot run." >&2
+        echo "   It was removed once before and the recipe reported 'skipped' for months." >&2
+        exit 1
+    fi
+    bash scripts/docker-smoke.sh
 
 # ============================================================================
 # Policy + supply-chain recipes

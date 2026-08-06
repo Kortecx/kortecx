@@ -1,6 +1,8 @@
+import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useUploadPreview } from "../../kx/use-upload-preview";
 import type { ChatMessage, MessageAttachment } from "../../lib/chat-thread";
+import { runViewSearch } from "../../lib/run-anchor";
 import { splitReasoning } from "../../lib/split-reasoning";
 import { useCopyToClipboard } from "../../lib/use-copy-to-clipboard";
 import { DigestChip } from "../DigestChip";
@@ -146,6 +148,31 @@ export function MessageBubble({
               <span>{copied ? "Copied" : "Copy"}</span>
             </button>
             <FeedbackButtons message={message} recipeHandle={recipeHandle} modelId={modelId} />
+            {/* An answer IS a run, and the console can show what produced it — the
+                steps, the tools it called, what each returned. The anchors were
+                already on the message and were only ever passed to RPCs, so this
+                turn was the one thing in the console you could not open. Rendered
+                only when an anchor exists, because without one the run view could
+                not scope to this turn and would show the whole journal. */}
+            {message.instanceId && message.terminalMoteId ? (
+              <Link
+                to="/workflows/$instanceId"
+                params={{ instanceId: message.instanceId }}
+                search={runViewSearch({
+                  terminalMoteId: message.terminalMoteId,
+                  // The chat thread does not persist the chain key, and it does not
+                  // need to: the terminal is the run anchor proper — populated for
+                  // every shape — and the run view derives the chain from it.
+                  reactChainSalt: null,
+                })}
+                className="msg-action"
+                title="See the steps behind this answer"
+                data-testid="msg-open-run"
+              >
+                <Icon name="chevron-right" size={15} />
+                <span>Steps</span>
+              </Link>
+            ) : null}
           </div>
         ) : null}
         {/* PR-A: the grounded-answer sources (read-only RAG) — a compact disclosure

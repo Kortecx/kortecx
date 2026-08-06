@@ -40,25 +40,61 @@ export interface ServerRun {
   readonly registeredUnixMs: number;
 }
 
+/** The per-instance agentic chains recovered from the turn record (see
+ *  `lib/react-chain-anchors`), keyed by instance id. */
+export type ChainsByInstance = ReadonlyMap<
+  string,
+  readonly { readonly stepSalt: string; readonly turn0MoteId: string }[]
+>;
+
 /**
  * Merge the richer local records with the durable server runs: keep every local
  * record (per-invocation handle + terminal), then append any server instance the
  * local history does not already cover (as a bare durable card), newest-first.
+ *
+ * `chains` recovers what the enumeration cannot carry. `ListRuns` lists durable
+ * INSTANCES, and one `kx serve` is one journal with one instance id shared by every
+ * submission — so a server-only row has no anchor and opens unscoped. When the turn
+ * record shows agentic chains under that instance, each chain IS a submission and
+ * carries its own anchors, so the instance expands into one scopable row per chain.
+ * That is what makes a run launched from the CLI openable as itself.
  */
-export function mergeServerRuns(local: RunRecord[], server: ServerRun[]): RunRecord[] {
+export function mergeServerRuns(
+  local: RunRecord[],
+  server: ServerRun[],
+  chains?: ChainsByInstance,
+): RunRecord[] {
   const seen = new Set(local.map((r) => r.instanceId));
   const serverOnly: RunRecord[] = server
     .filter((s) => !seen.has(s.instanceId))
-    .map((s) => ({
-      instanceId: s.instanceId,
-      // `ListRuns` enumerates durable INSTANCES; it carries neither per-run anchor, so a
-      // server-only card genuinely cannot be scoped (the run view says so).
-      terminalMoteId: null,
-      reactChainSalt: null,
-      recipeFingerprint: s.recipeFingerprint,
-      handle: null,
-      startedAt: s.registeredUnixMs,
-    }));
+    .flatMap((s): RunRecord[] => {
+      const found = chains?.get(s.instanceId) ?? [];
+      if (found.length === 0) {
+        return [
+          {
+            instanceId: s.instanceId,
+            // No chain under this instance (a plain pipeline, or its turns have aged
+            // out of the page): genuinely not scopable, and the run view says so
+            // rather than passing the journal off as the run.
+            terminalMoteId: null,
+            reactChainSalt: null,
+            recipeFingerprint: s.recipeFingerprint,
+            handle: null,
+            startedAt: s.registeredUnixMs,
+          },
+        ];
+      }
+      return found.map((c) => ({
+        instanceId: s.instanceId,
+        terminalMoteId: c.turn0MoteId,
+        reactChainSalt: c.stepSalt,
+        recipeFingerprint: s.recipeFingerprint,
+        handle: null,
+        // A turn carries no clock — the instance's registration is the only real time
+        // we have, so every chain under it shares it rather than inventing one.
+        startedAt: s.registeredUnixMs,
+      }));
+    });
   return [...local, ...serverOnly].sort((a, b) => b.startedAt - a.startedAt);
 }
 

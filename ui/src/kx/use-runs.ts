@@ -16,7 +16,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { chainAnchors } from "../lib/react-chain-anchors";
 import {
+  type ChainsByInstance,
   RUNS_CHANGED_EVENT,
   type RunRecord,
   clearRuns,
@@ -29,6 +31,8 @@ import { toUiError } from "./errors";
 import { queryKeys } from "./query-keys";
 
 const PAGE = 100;
+/** One page of turn rows across every chain on the node — the server clamps this. */
+const CHAIN_PAGE = 500;
 
 export interface UseRuns {
   /** Local + durable runs, newest-first. */
@@ -79,9 +83,44 @@ export function useRuns(): UseRuns {
     },
   });
 
+  // The agentic chains on this node, so a run started OUTSIDE this browser (`kx agent
+  // run`, `kx chat --tools`, a trigger) can still be opened as itself. Listing turns
+  // with no chain key returns every chain, and each row names the one it belongs to.
+  // Fail-soft: an older gateway, or a chain aged out of the page, simply yields no
+  // anchors and those runs stay unscoped — never a fabricated one.
+  const chainsQuery = useQuery({
+    queryKey: queryKeys.reactTurns(endpoint, undefined, CHAIN_PAGE, undefined),
+    enabled: status === "connected" && client !== null,
+    retry: false,
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      return client.listReactTurns({ limit: CHAIN_PAGE });
+    },
+  });
+
   const notWired = server.isError && toUiError(server.error).kind === "not-wired";
   const serverRuns = server.data?.runs ?? [];
-  const runs = useMemo(() => mergeServerRuns(local, serverRuns), [local, serverRuns]);
+  const chainRows = chainsQuery.data?.turns;
+  const chains = useMemo<ChainsByInstance>(() => {
+    const rowsByInstance = new Map<string, (typeof chainRows & object)[number][]>();
+    for (const row of chainRows ?? []) {
+      const bucket = rowsByInstance.get(row.instanceId);
+      if (bucket === undefined) {
+        rowsByInstance.set(row.instanceId, [row]);
+      } else {
+        bucket.push(row);
+      }
+    }
+    return new Map(
+      [...rowsByInstance].map(([instanceId, rows]) => [instanceId, chainAnchors(rows)]),
+    );
+  }, [chainRows]);
+  const runs = useMemo(
+    () => mergeServerRuns(local, serverRuns, chains),
+    [local, serverRuns, chains],
+  );
 
   const add = useCallback((run: RunRecord) => setLocal(recordRun(endpoint, run)), [endpoint]);
   const refresh = useCallback(() => {

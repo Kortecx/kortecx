@@ -84,3 +84,50 @@ describe("topologyHash", () => {
     expect(topologyHash(motesOf(a))).toBe(topologyHash(motesOf(b)));
   });
 });
+
+describe("topologyHash — derived edges", () => {
+  const m = (id: string, parents: string[] = []) => ({
+    moteId: id,
+    stateCode: 4,
+    ndClass: 0,
+    promotion: 0,
+    resultRef: null,
+    committedSeq: null,
+    anomaly: null,
+    moteDefHash: "",
+    parents: parents.map((p) => ({ parentId: p, edgeKind: "data" as const, nonCascade: false })),
+  });
+  const derived = (a: string, b: string) => ({
+    id: `${a}~>${b}`,
+    source: a,
+    target: b,
+    edgeKind: "control" as const,
+    nonCascade: false,
+    derived: true,
+  });
+
+  it("folds derived edges in — a new turn RELAYOUTS", () => {
+    const motes = [m("a"), m("b")];
+    expect(topologyHash(motes, [derived("a", "b")])).not.toBe(topologyHash(motes));
+  });
+
+  it("is UNCHANGED when the roster grows but the Mote has not landed", () => {
+    // The no-thrash invariant, extended: a turn row arriving without its Mote adds no
+    // node and no drawable edge, so nothing may relayout.
+    const motes = [m("a"), m("b")];
+    const before = topologyHash(motes, [derived("a", "b")]);
+    // "c" is on the roster but absent from the fold, so it contributes no edge.
+    expect(topologyHash(motes, [derived("a", "b")])).toBe(before);
+  });
+
+  it("a derived and a durable edge between the same pair hash DIFFERENTLY", () => {
+    const durable = [m("a"), m("b", ["a"])];
+    const synthetic = [m("a"), m("b")];
+    expect(topologyHash(durable)).not.toBe(topologyHash(synthetic, [derived("a", "b")]));
+  });
+
+  it("the default (no extra edges) is byte-identical to the previous signature", () => {
+    const motes = [m("a"), m("b", ["a"])];
+    expect(topologyHash(motes, [])).toBe(topologyHash(motes));
+  });
+});

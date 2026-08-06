@@ -79,3 +79,58 @@ fn no_benchmark_result_is_tracked() {
         "no benchmark result may be tracked in the OSS repo; found:\n{tracked}"
     );
 }
+
+/// The mirror image of the two tests above, for scripts that MUST ship.
+///
+/// `/scripts/*.sh` is ignored by default, so a helper a gate calls is untracked unless
+/// something whitelists it — and an untracked gate is a gate that runs nothing in every
+/// fresh checkout. That has now happened twice: `registry-check.sh` printed "skipped"
+/// and returned 0 inside `just ci`, and `docker-smoke.sh` was removed entirely while
+/// its CI job stayed green. Both halves are asserted, because either alone is
+/// satisfiable while the script still fails to reach a checkout.
+#[test]
+fn every_shipped_script_is_whitelisted_and_tracked() {
+    let root = repo_root();
+    if is_private_corpus_repo(&root) {
+        return; // the private repo keeps a divergent .gitignore by design
+    }
+    // Scripts a RECIPE OR WORKFLOW invokes — each must reach a public checkout.
+    const SHIPPED: &[&str] = &[
+        "install.sh",
+        "release-notes.sh",
+        "package-release.sh",
+        "registry-check.sh",
+        "run-feature-gates.sh",
+        "docker-smoke.sh",
+    ];
+    let gitignore = include_str!("../../../.gitignore");
+    for name in SHIPPED {
+        assert!(
+            gitignore
+                .lines()
+                .any(|l| l.trim() == format!("!/scripts/{name}")),
+            ".gitignore must carry `!/scripts/{name}` — `/scripts/*.sh` ignores it \
+             otherwise, and the gate that calls it silently runs nothing"
+        );
+    }
+    let Ok(output) = Command::new("git")
+        .args(["ls-files", "--", "scripts/"])
+        .current_dir(&root)
+        .output()
+    else {
+        return; // git unavailable — the whitelist scan above still gates
+    };
+    if !output.status.success() {
+        return;
+    }
+    let tracked = String::from_utf8_lossy(&output.stdout);
+    for name in SHIPPED {
+        assert!(
+            tracked
+                .lines()
+                .any(|l| l.trim() == format!("scripts/{name}")),
+            "scripts/{name} is whitelisted but NOT TRACKED — it would be absent from \
+             every fresh checkout. Tracked under scripts/:\n{tracked}"
+        );
+    }
+}
