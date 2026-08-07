@@ -20,6 +20,7 @@ fn reference_connector(name: &str, credential_ref: Option<String>) -> ConnectorU
             args: vec![],
         },
         credential_ref,
+        env: Vec::new(),
         session_mode: SessionMode::Stateless,
     }
 }

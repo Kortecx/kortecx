@@ -4,8 +4,53 @@ All notable changes to kortecx are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). kortecx is in early
 development; interfaces may change before 1.0 — pin a commit if you build on it.
 
+### Added
+
+- **A connector can now be given the whole environment it needs, by reference.** A stdio MCP
+  server used to receive exactly one environment variable, and its name was forced to be the
+  name of the stored secret — so any server wanting two was impossible to configure. A
+  connection now carries an environment map: each entry pairs the variable the server reads
+  with the NAME of a secret that supplies it. Both halves are names; the value is resolved when
+  the server starts and dropped, so nothing is written to disk. Available as repeatable
+  `kx connections add --env NAME=SECRET_REF`, as `env` on `registerMcpServer` (TypeScript) and
+  `register_mcp_server` (Python), and as environment rows in the console. `ListMcpServers` and
+  `kx connections list` report the variable NAMES a connector is configured with — never the
+  secrets behind them. For example, the official GitLab MCP server needs both
+  `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_API_URL` and could not previously be dialed at all:
+
+  ```sh
+  kx secrets set --name gitlab-token --value '…'
+  kx secrets set --name gitlab-url   --value 'https://gitlab.example.com/api/v4'
+  kx connections add --name gitlab --command mcp-server-gitlab \
+    --env GITLAB_PERSONAL_ACCESS_TOKEN=gitlab-token \
+    --env GITLAB_API_URL=gitlab-url
+  ```
+
+  A malformed map is refused at registration with the reason (an empty variable name, a
+  variable declared twice, or an entry naming no secret), and a variable whose secret does not
+  resolve refuses the connection rather than starting the server without it. `--env` takes the
+  name of a stored secret and rejects anything that looks like a value.
+
+  An environment map is set by an operator and is **never model-proposed**. It travels on a new
+  `RegisterMcpServerWithEnv` RPC rather than on `RegisterMcpServer`, because the plain
+  registration request is also what a natural-language proposal displays, logs and forwards —
+  and an environment decides what a child process is configured with. Keeping the map off that
+  message makes "a model cannot propose an environment" a property of the schema rather than a
+  rule a proposer must remember, the same reason `ProposedScript` omits `argv`. The CLI and both
+  SDKs pick the right call for you, so registering with an environment is still one command.
+
 ### Changed
 
+- **Tools → Integrations and Tools → Connections are now one Connectors surface.** They
+  described the same registry from opposite ends: one listed the connectors that ship in the
+  box and could only print a command to copy into a terminal, the other listed what was
+  actually dialed and knew nothing about what shipped. There is now a single list — every
+  bundled connector plus anything else you have connected, each row saying whether it is set
+  up, and setting one up is an action on the row. Links to the two old tabs still open the new
+  one.
+- **`kx react list --json` now includes `step_salt`.** The chain key was on the wire and in the
+  text output but missing from the JSON, so a caller could not scope a query to a single
+  agentic submission without it.
 - **The release now ships the runtime's own agent tools.** The prebuilt release carries a
   `kx-tools-<target>.tar.gz` beside the `kx` binary: the bundled deterministic stdio tools
   (`kx-mcp-echo`, `kx-mcp-calc`, `kx-mcp-kv`) and the four bundled connectors

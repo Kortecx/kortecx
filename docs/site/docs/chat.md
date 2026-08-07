@@ -31,7 +31,7 @@ honest empty state rather than a fake menu.
 
 When the gateway has **no chat model provisioned**, chat shows an honest
 "no model — connect one" notice (start a model with
-`kx serve --features inference`) instead of silently echoing your prompt. You can
+a serve built with inference) instead of silently echoing your prompt. You can
 still choose the model-free `kx/recipes/echo` recipe in chat settings for a
 deterministic round-trip — a deliberate choice the console honors as-is.
 
@@ -96,7 +96,7 @@ replaying the turn reproduces the same grounded answer. Grounding turns on only
 This needs an inference build **with retrieval** and a served model:
 
 ```bash
-kx serve --features inference,hnsw --dev-allow-local
+kx serve --dev-allow-local
 ```
 
 ### Ingest first, then chat

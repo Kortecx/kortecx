@@ -44,13 +44,17 @@ test("Tools registry: built-in inventory, disabled built-in deregister, SSRF-ref
     timeout: 30_000,
   });
 
-  // PR-6b-1: the live Connections panel (replaces the old honest-disabled stub) —
-  // the govern surface over the external MCP gateway. It now lives under the
-  // Connections TAB of the Integrations hub; switch to it. Its add form + the
-  // honest-disabled Cloud (OAuth/marketplace) affordance are always present
-  // regardless of whether this FFI-free serve wired the mcp-gateway feature.
-  await page.getByTestId("tools-tab-connections").click();
-  await expect(page.getByTestId("connections-panel")).toBeVisible();
-  await expect(page.getByTestId("connections-add-form")).toBeVisible();
-  await expect(page.getByTestId("connections-cloud-disabled")).toBeVisible();
+  // The Connectors surface — the govern surface over the external MCP gateway, merged
+  // with the bundled-connector catalog it used to sit beside. The configure form is
+  // opened FROM a row rather than always present, so the flow is: the list renders, a
+  // row offers set-up, and taking it opens the form. The honest-disabled Cloud
+  // affordance is always there, regardless of whether this FFI-free serve wired the
+  // mcp-gateway feature.
+  await page.getByTestId("tools-tab-connectors").click();
+  await expect(page.getByTestId("connectors-panel")).toBeVisible();
+  await expect(page.getByTestId("connectors-cloud-disabled")).toBeVisible();
+  await page.getByTestId("connector-configure-gmail").click();
+  await expect(page.getByTestId("connector-form")).toBeVisible();
+  // Prefilled from the row, so setting up a bundled connector is not retyping it.
+  await expect(page.getByTestId("connector-name")).toHaveValue("gmail");
 });

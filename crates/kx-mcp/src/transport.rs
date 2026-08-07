@@ -173,7 +173,11 @@ pub struct StdioTransport {
     program: OsString,
     args: Vec<OsString>,
     envs: Vec<(OsString, OsString)>,
-    credentials: Vec<CredentialRef>,
+    /// Each entry is the child environment-variable NAME the secret lands in, paired with
+    /// the credential that resolves it. The name is carried separately because a server
+    /// names its own variables and an operator names their own secrets, and those are not
+    /// the same namespace — the shape [`crate::HttpTransport`] has always used for headers.
+    credentials: Vec<(OsString, CredentialRef)>,
     /// Resolves a `CredentialRef`'s `SecretRef` → value at spawn (D110.2).
     /// Defaults to [`EnvSecretStore`]; swap a cloud vault via
     /// [`StdioTransport::with_secret_store`].
@@ -182,8 +186,11 @@ pub struct StdioTransport {
 
 impl std::fmt::Debug for StdioTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Elide the secret store (not `Debug`-meaningful); credential identities
-        // are already redaction-safe.
+        // Elide the secret store (not `Debug`-meaningful) and — deliberately — `envs`,
+        // whose VALUES are raw strings rather than references. Everything printed here is
+        // a name: the program, its args, each credential's target variable name and the
+        // ref identity behind it. `stdio_env_hygiene` asserts the elision rather than
+        // trusting `finish_non_exhaustive` to keep holding it.
         f.debug_struct("StdioTransport")
             .field("program", &self.program)
             .field("args", &self.args)
@@ -230,16 +237,39 @@ impl StdioTransport {
     /// Register a credential to inject into the subprocess environment out-of-band
     /// at dispatch time (D81). The secret value is read transiently when the child
     /// is spawned and is never stored on this struct.
+    ///
+    /// The child sees the secret under the ref's OWN name. Use [`Self::credential_as`]
+    /// when the server expects a different variable name than the secret is stored under.
     #[must_use]
     pub fn credential(mut self, credential: CredentialRef) -> Self {
-        self.credentials.push(credential);
+        let var_name = OsString::from(credential.identity());
+        self.credentials.push((var_name, credential));
+        self
+    }
+
+    /// Register a credential to inject under an EXPLICIT child environment-variable name.
+    ///
+    /// This is what lets one connection carry several variables: each entry pairs the name
+    /// the server reads with the credential that supplies it, so a server wanting both
+    /// `GITLAB_API_URL` and `GITLAB_PERSONAL_ACCESS_TOKEN` is expressible. The value is
+    /// still supplied BY REFERENCE — a `CredentialRef`, resolved transiently at spawn and
+    /// dropped — so nothing here puts a secret at rest.
+    #[must_use]
+    pub fn credential_as(
+        mut self,
+        var_name: impl Into<OsString>,
+        credential: CredentialRef,
+    ) -> Self {
+        self.credentials.push((var_name.into(), credential));
         self
     }
 }
 
 impl McpTransport for StdioTransport {
     fn declared_secret_scope(&self) -> SecretScope {
-        scope_of_credentials(self.credentials.iter())
+        // The scope is over the REFS (what authority is needed), never the target variable
+        // names (where the values land) — mirrors `HttpTransport::declared_secret_scope`.
+        scope_of_credentials(self.credentials.iter().map(|(_, c)| c))
     }
 
     fn round_trip(
@@ -266,8 +296,10 @@ impl McpTransport for StdioTransport {
         // the child env; the secret never transits an EffectRequest / handle / journal.
         // A NAMED credential that does not resolve refuses the spawn — see
         // `CredentialRef::try_inject_into` for why the permissive form misleads.
-        for credential in &self.credentials {
-            if !credential.try_inject_into(&*self.secret_store, &mut cmd) {
+        // The refusal names the REF, not the target variable: the ref is what an operator
+        // has to go and fix.
+        for (var_name, credential) in &self.credentials {
+            if !credential.try_inject_into_as(var_name, &*self.secret_store, &mut cmd) {
                 return Err(TransportError::CredentialUnresolved {
                     name: credential.identity().to_string(),
                 });
@@ -353,8 +385,8 @@ impl McpTransport for StdioTransport {
         for (key, value) in &self.envs {
             cmd.env(key, value);
         }
-        for credential in &self.credentials {
-            if !credential.try_inject_into(&*self.secret_store, &mut cmd) {
+        for (var_name, credential) in &self.credentials {
+            if !credential.try_inject_into_as(var_name, &*self.secret_store, &mut cmd) {
                 return Err(TransportError::CredentialUnresolved {
                     name: credential.identity().to_string(),
                 });

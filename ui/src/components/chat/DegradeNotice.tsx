@@ -11,9 +11,8 @@ export function DegradeNotice({ error }: { error?: UiError }) {
     <div data-testid="degrade-notice">
       {error ? <ErrorNotice error={error} /> : null}
       <p className="muted">
-        No chat model is provisioned on this gateway. Start one with{" "}
-        <code>kx serve --features inference</code>, or switch chat to the model-free{" "}
-        <code>kx/recipes/echo</code> recipe in Settings.
+        No chat model is provisioned on this gateway. Start a local model and restart it, or switch
+        chat to the model-free <code>kx/recipes/echo</code> recipe in Settings.
       </p>
     </div>
   );

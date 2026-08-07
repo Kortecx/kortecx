@@ -10,6 +10,7 @@
 //! print only the *identity* (the ref name), so a logged credential ref never
 //! leaks the secret.
 
+use std::ffi::OsStr;
 use std::process::Command;
 
 use kx_warrant::SecretRef;
@@ -79,9 +80,34 @@ impl CredentialRef {
     /// [`inject_into`]: Self::inject_into
     #[must_use]
     pub fn try_inject_into(&self, store: &dyn SecretStore, cmd: &mut Command) -> bool {
+        self.try_inject_into_as(OsStr::new(&self.secret_ref.0), store, cmd)
+    }
+
+    /// Inject as [`try_inject_into`], but under an EXPLICIT environment-variable name
+    /// rather than the ref's own name.
+    ///
+    /// A server names the variables it wants (`GITLAB_API_URL`); an operator names the
+    /// secrets they hold (`prod-gitlab-url`). Forcing those to be the same string makes
+    /// any server wanting two variables unconfigurable, and makes one wanting a variable
+    /// the operator already stores under a different name unconfigurable too. This is the
+    /// stdio analogue of [`crate::HttpTransport::header_credential`], which has always
+    /// carried a target name beside its credential.
+    ///
+    /// The secret still resolves transiently and is dropped at the end of this call — the
+    /// target name changes WHERE the value lands, never how long it lives. `false` ⇒ the
+    /// ref did not resolve and nothing was injected.
+    ///
+    /// [`try_inject_into`]: Self::try_inject_into
+    #[must_use]
+    pub fn try_inject_into_as(
+        &self,
+        var_name: &OsStr,
+        store: &dyn SecretStore,
+        cmd: &mut Command,
+    ) -> bool {
         match store.resolve(&self.secret_ref) {
             Some(secret) => {
-                cmd.env(&self.secret_ref.0, secret);
+                cmd.env(var_name, secret);
                 true
             }
             None => false,

@@ -245,6 +245,9 @@ fields!(ToolFields {
     server_host: String,
     remote_name: String,
 });
+// Deliberately NO `env`: with `deny_unknown_fields`, a model that tries to author an
+// environment map for a connector is REFUSED as malformed rather than quietly obeyed. An
+// environment map is execution-shaped and an operator supplies it — see `ConnectorProposal`.
 fields!(ConnectorFields {
     transport: String,
     endpoint: String,

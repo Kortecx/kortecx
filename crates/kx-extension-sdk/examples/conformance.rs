@@ -20,9 +20,27 @@
 use kx_extension_sdk::conformance::{reference_connector, run_conformance, ConnectorUnderTest};
 use kx_extension_sdk::prelude::{SessionMode, TransportSpec};
 
+/// The by-reference environment map from `KX_CONNECTOR_ENV`, a comma-separated
+/// `VAR=CREDENTIAL_REF` list. Both halves are NAMES — the right side names a stored
+/// secret, never carries one — which is what lets a connector needing several variables
+/// (an API base URL beside its token) be put under this gate at all.
+fn env_map_from_environment() -> Vec<(String, String)> {
+    std::env::var("KX_CONNECTOR_ENV")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|entry| {
+            let (name, secret_ref) = entry.split_once('=')?;
+            let (name, secret_ref) = (name.trim(), secret_ref.trim());
+            (!name.is_empty() && !secret_ref.is_empty())
+                .then(|| (name.to_string(), secret_ref.to_string()))
+        })
+        .collect()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cred = std::env::var("KX_CONNECTOR_CRED_REF").ok();
+    let env_map = env_map_from_environment();
 
     let cut = if args.is_empty() {
         let Some(c) = reference_connector() else {
@@ -43,6 +61,7 @@ fn main() {
                 url,
             },
             credential_ref: cred,
+            env: env_map.clone(),
             session_mode: SessionMode::Stateless,
         }
     } else {
@@ -53,6 +72,7 @@ fn main() {
                 args: args[1..].to_vec(),
             },
             credential_ref: cred,
+            env: env_map,
             session_mode: SessionMode::Stateless,
         }
     };

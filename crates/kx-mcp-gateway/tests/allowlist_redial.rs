@@ -45,6 +45,7 @@ fn persist_http(store: &SqliteConnectionStore, name: &str, url: &str) {
                 tls_required: true,
             },
             credential_ref: None,
+            env: Vec::new(),
             health: ConnectionHealth::Connected,
             tool_count: 1,
             session_mode: SessionMode::Stateless,

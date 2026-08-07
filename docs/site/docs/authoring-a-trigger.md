@@ -151,7 +151,7 @@ kx triggers add --name standup --kind cron --app standup-digest \
 ```
 
 - **Target** — pass exactly one of `recipe` / `app` (`--recipe` | `--app`). An App
-  target needs the App-run seam (`kx serve --features mcp-gateway`, the default).
+  target needs the App-run seam (a serve built with mcp-gateway, the default).
 - **Schedule** — `schedule` accepts either interval seconds (`"300"`) **or** a standard
   5-field crontab expression (`min hour dom month dow`). A cron expression is evaluated
   in `timezone` (any IANA name; empty ⇒ UTC), DST-correct.

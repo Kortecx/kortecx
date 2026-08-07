@@ -12,6 +12,7 @@
 )]
 
 pub mod bench_http;
+pub mod gitlab_stub;
 // The workflow bench family's fixture + stored definitions: references the
 // `eval_bench` handle consts, which ride the `serve-engine` feature.
 #[cfg(feature = "serve-engine")]

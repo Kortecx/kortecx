@@ -2169,6 +2169,9 @@ fn control_preview_to_proto(
             server_host: t.server_host,
             remote_name: t.remote_name,
         }),
+        // The plain request, which carries no environment map — that lives on the separate
+        // `RegisterMcpServerEnvRequest`, off this preview arm on purpose. `ConnectorProposal`
+        // has no env field either, so the reduction is structural at both layers.
         P::RegisterMcpServer(c) => R::RegisterMcpServer(proto::RegisterMcpServerRequest {
             server_name: c.server_name,
             transport: c.transport,
@@ -4792,7 +4795,64 @@ impl KxGateway for GatewayService {
             args: req.args,
             tls_required: req.tls_required,
             credential_ref,
+            // This RPC carries no environment by construction — its request is a
+            // `ControlPreview` arm. `RegisterMcpServerWithEnv` is the one that does.
+            env: Vec::new(),
             session_mode: req.session_mode,
+        };
+        let out = admin.register_server(reg).map_err(mcp_admin_status)?;
+        Ok(Response::new(proto::RegisterMcpServerResponse {
+            connection_id: out.connection_id.to_vec(),
+            discovered: out.discovered,
+            health: out.health,
+        }))
+    }
+
+    async fn register_mcp_server_with_env(
+        &self,
+        request: Request<proto::RegisterMcpServerEnvRequest>,
+    ) -> Result<Response<proto::RegisterMcpServerResponse>, Status> {
+        // Same admission, same dial, same response as `RegisterMcpServer` — the only
+        // difference is the environment map, which rides here rather than on the plain
+        // request because that request is a `ControlPreview` arm and an environment is not
+        // something a natural-language proposal may carry.
+        let admin = self.mcp_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "RegisterMcpServerWithEnv: no MCP gateway wired (connections.db absent)",
+            )
+        })?;
+        let req = request.into_inner();
+        let base = req.base.ok_or_else(|| {
+            Status::invalid_argument("base registration is required alongside the env map")
+        })?;
+        if base.server_name.trim().is_empty() {
+            return Err(Status::invalid_argument("server_name is required"));
+        }
+        if base.endpoint.trim().is_empty() {
+            return Err(Status::invalid_argument("endpoint is required"));
+        }
+        let credential_ref = if base.credential_ref.trim().is_empty() {
+            None
+        } else {
+            Some(base.credential_ref)
+        };
+        // Carried through as NAME pairs; the host validates them (empty name, `=`/NUL, an
+        // empty ref, a duplicate) and refuses rather than dialing a half-configured server.
+        // Nothing here is a secret VALUE, so nothing here is redacted.
+        let env: Vec<(String, String)> = req
+            .env
+            .into_iter()
+            .map(|e| (e.name, e.credential_ref))
+            .collect();
+        let reg = crate::McpServerRegistration {
+            server_name: base.server_name,
+            transport: base.transport,
+            endpoint: base.endpoint,
+            args: base.args,
+            tls_required: base.tls_required,
+            credential_ref,
+            env,
+            session_mode: base.session_mode,
         };
         let out = admin.register_server(reg).map_err(mcp_admin_status)?;
         Ok(Response::new(proto::RegisterMcpServerResponse {
@@ -4821,6 +4881,7 @@ impl KxGateway for GatewayService {
                 health: s.health,
                 tool_count: s.tool_count,
                 credential_ref_present: s.credential_ref_present,
+                env_names: s.env_names,
                 session_mode: s.session_mode,
             })
             .collect();

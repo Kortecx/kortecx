@@ -6,8 +6,7 @@ import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AutoGrantStatus } from "../tools/AutoGrantStatus";
 import { BundleComposer } from "../tools/BundleComposer";
-import { ConnectionsPanel } from "../tools/ConnectionsPanel";
-import { IntegrationsPanel } from "../tools/IntegrationsPanel";
+import { ConnectorsPanel } from "../tools/ConnectorsPanel";
 import { ManifestGrid } from "../tools/ManifestGrid";
 import { RegisterToolForm } from "../tools/RegisterToolForm";
 import { RegisteredToolsPanel } from "../tools/RegisteredToolsPanel";
@@ -20,8 +19,7 @@ import { TriggersPanel } from "../tools/TriggersPanel";
 const TABS: ReadonlyArray<{ id: ToolsTab; label: string }> = [
   { id: "tools", label: "Tools" },
   { id: "scripts", label: "Scripts" },
-  { id: "integrations", label: "Integrations" },
-  { id: "connections", label: "Connections" },
+  { id: "connectors", label: "Connectors" },
   { id: "skills", label: "Skills" },
   { id: "triggers", label: "Triggers" },
   { id: "secrets", label: "Secrets" },
@@ -40,11 +38,14 @@ const TABS: ReadonlyArray<{ id: ToolsTab; label: string }> = [
  *    A script is a tool whose declaration carries source, an interpreter and a
  *    resource wish; it runs in the platform sandbox under the CALLER's grants, and
  *    a serve that cannot sandbox refuses to register one at all.
- * 3. **Integrations** — the connectors bundled with this runtime, and how to dial them.
- * 4. **Connections** — dial external MCP servers (the live untrusted-egress surface).
- * 3. **Triggers** — bind an inbound event (webhook / cron / RPC) to a recipe handle.
- * 4. **Secrets** — the local secret store; a `SecretRef` NAME is what a
- *    Connection's / Trigger's `credential_ref` points at (the value is write-only, D81).
+ * 3. **Connectors** — everything the runtime can reach outside itself: the connectors that
+ *    ship in the box and any other MCP server you connect, in ONE list. A row says whether
+ *    it is set up, and acting on the row sets it up. Catalog and instance are two states of
+ *    a row, not two destinations.
+ * 4. **Skills** — the declarative skill artifacts an agent can apply.
+ * 5. **Triggers** — bind an inbound event (webhook / cron / RPC) to a recipe handle.
+ * 6. **Secrets** — the local secret store; a `SecretRef` NAME is what a connector's or
+ *    trigger's credential reference points at (the value is write-only, D81).
  *
  * Each surface degrades to an honest not-wired empty state on older gateways
  * (UNIMPLEMENTED — don't-fake-gaps).
@@ -63,9 +64,9 @@ export function ToolsSection({
           <h1>MCP</h1>
           <p className="muted">
             Register, govern, and connect everything your agents can call — tools, sandboxed
-            scripts, bundled integrations, external servers, event triggers and secrets.
-            Registration grants no authority: anything here fires only under a server-issued
-            warrant, re-verified at every call.
+            scripts, connectors, skills, event triggers and secrets. Registration grants no
+            authority: anything here fires only under a server-issued warrant, re-verified at every
+            call.
           </p>
         </div>
       </div>
@@ -86,10 +87,8 @@ export function ToolsSection({
 
       {tab === "scripts" ? (
         <ScriptsPanel />
-      ) : tab === "integrations" ? (
-        <IntegrationsPanel />
-      ) : tab === "connections" ? (
-        <ConnectionsTab />
+      ) : tab === "connectors" ? (
+        <ConnectorsPanel />
       ) : tab === "skills" ? (
         <SkillsPanel />
       ) : tab === "triggers" ? (
@@ -100,21 +99,6 @@ export function ToolsSection({
         <ToolsTabBody />
       )}
     </section>
-  );
-}
-
-/** The Connections tab — the live external-MCP-gateway govern surface. */
-function ConnectionsTab() {
-  return (
-    <>
-      <p className="muted">
-        Dial external MCP servers (stdio · HTTP, including Py/TS-SDK-exposed gateways) to give your
-        agents external knowledge + actions. Registering DIALS the server and registers its tools;
-        secret-less credential references only (OAuth + a credential marketplace are a Cloud
-        capability).
-      </p>
-      <ConnectionsPanel />
-    </>
   );
 }
 

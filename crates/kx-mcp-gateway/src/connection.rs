@@ -140,6 +140,14 @@ pub struct Connection {
     pub transport: TransportSpec,
     /// The OPTIONAL credential reference NAME (never the secret value).
     pub credential_ref: Option<String>,
+    /// The by-reference environment map: `(child variable NAME, credential ref NAME)`.
+    ///
+    /// BOTH halves are names. The right-hand side is a `SecretRef`, resolved transiently at
+    /// spawn and dropped — never the value — so a connection at rest holds no secret, which
+    /// is the same posture `credential_ref` has always had. Ordered pairs rather than a map:
+    /// declaration order round-trips and a duplicate name reaches the validator instead of
+    /// being silently collapsed.
+    pub env: Vec<(String, String)>,
     /// The last-folded health.
     pub health: ConnectionHealth,
     /// The number of tools discovered on the last successful `tools/list`.
@@ -247,6 +255,7 @@ mod tests {
                 tls_required: true,
             },
             credential_ref: None,
+            env: Vec::new(),
             health: ConnectionHealth::Unknown,
             tool_count: 0,
             session_mode: SessionMode::Stateless,
@@ -270,6 +279,7 @@ mod tests {
                 args: vec!["--stdio".into()],
             },
             credential_ref: None,
+            env: Vec::new(),
             health: ConnectionHealth::Unknown,
             tool_count: 0,
             session_mode: SessionMode::Stateless,

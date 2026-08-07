@@ -261,6 +261,9 @@ export class McpServer {
     readonly credentialRefPresent: boolean,
     /** PR-6b-3: the firing posture — `"stateful"` | `"stateless"`. */
     readonly sessionMode: string,
+    /** The environment variable NAMES this server is configured with — names only,
+     *  never the refs behind them and never the values. */
+    readonly envNames: readonly string[] = [],
   ) {}
 
   static fromProto(s: PbMcpServer): McpServer {
@@ -273,6 +276,7 @@ export class McpServer {
       s.toolCount,
       s.credentialRefPresent,
       s.sessionMode,
+      s.envNames ?? [],
     );
   }
 }
@@ -319,6 +323,12 @@ export interface RegisterMcpServerInput {
   readonly tlsRequired?: boolean;
   /** OPTIONAL secret-less credential ref NAME (env var / vault key). */
   readonly credentialRef?: string;
+  /** stdio: the environment the server's child process needs, BY REFERENCE — each key is
+   *  a variable NAME the server reads, each value is the NAME of a stored secret that
+   *  supplies it. Never a secret value: it resolves at spawn and is dropped (D81). A
+   *  server wanting several variables (an API base URL beside its token) is expressed as
+   *  several entries. Ignored for `http`, which authenticates via `credentialRef`. */
+  readonly env?: Readonly<Record<string, string>>;
   /** PR-6b-3 firing posture: `"stateful"` | `"stateless"` (defaults to `"stateless"`). */
   readonly sessionMode?: string;
 }

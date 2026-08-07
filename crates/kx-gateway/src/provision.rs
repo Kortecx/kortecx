@@ -141,7 +141,7 @@ const TOPIC_SCHEMA_REF: [u8; 32] = [0x2b; 32];
 
 /// The wire handle of the AL1 model recipe: a single PURE (greedy) model step
 /// that ChatML-wraps a `prompt` free-param and runs it through the in-process
-/// inference backend. Provisioned only when `kx serve --features inference` has a
+/// inference backend. Provisioned only when a serve built with inference has a
 /// fit, resolvable serve model (see `model_exec::resolve_serve_model`). Shared
 /// with the e2e test (no drift).
 pub const MODEL_RECIPE_HANDLE: &str = "kx/recipes/chat";
@@ -461,7 +461,7 @@ pub struct DemoLibrary {
     /// each authored step's warrant uses AND the ceiling the party's resolved Use
     /// authority intersects against ([`HostWorkflowAuthor`]).
     blueprint_base: WarrantSpec,
-    /// The served model id, if this serve resolved one (`kx serve --features
+    /// The served model id, if this serve resolved one (a serve built with
     /// inference`). Authored MODEL steps require it (else they are refused).
     serve_model: Option<ModelId>,
     /// POC-3: the FULL registered model set (primary first), so the `model` ENUM
@@ -689,7 +689,7 @@ impl DemoLibrary {
 
         // (chat) the AL1 model recipe — a single PURE (greedy) model step routed
         // to the served model, with a `prompt` free-param. Seeded only when a fit
-        // serve model is configured (`kx serve --features inference`).
+        // serve model is configured (a serve built with inference).
         if let Some(model_id) = serve_model {
             let model_w = model_warrant(exec_class, model_id);
             let model_h = model_handle()?;
@@ -2447,7 +2447,8 @@ impl HostWorkflowAuthor {
     ) -> Result<(ModelId, WarrantSpec), BinderError> {
         let served = self.lib.serve_model.as_ref().ok_or_else(|| {
             BinderError::InvalidArgs(
-                "MODEL steps require a served model (run `kx serve --features inference`)".into(),
+                "MODEL steps require a served model (run `kx serve` on a build with inference)"
+                    .into(),
             )
         })?;
         let route_id = if model_id.is_empty() {

@@ -98,6 +98,101 @@ fn secret_reaches_no_runtime_sink() {
     std::env::remove_var(CRED_VAR);
 }
 
+/// The same sweep with SEVERAL credentials, each landing in a variable named differently
+/// from the ref that supplies it — the environment-map shape.
+///
+/// Two things could have gone wrong once a target name sits beside each credential, and
+/// neither would have failed the single-credential sweep above: a second secret could reach
+/// a sink the first does not, and the target NAMES could travel with their values. Both are
+/// checked here, and the scanner is proved able to see a secret at all before either
+/// assertion is trusted.
+#[test]
+fn several_secrets_under_other_names_reach_no_runtime_sink() {
+    const SECRET_A: &str = "SUPER_SECRET_sk-AAAA-multi-do-not-leak-1111111111";
+    const SECRET_B: &str = "SUPER_SECRET_sk-BBBB-multi-do-not-leak-2222222222";
+    const REF_A: &str = "KX_MCP_TEST_MULTI_REF_A";
+    const REF_B: &str = "KX_MCP_TEST_MULTI_REF_B";
+
+    std::env::set_var(REF_A, SECRET_A);
+    std::env::set_var(REF_B, SECRET_B);
+
+    let (name, version) = tool();
+    let transport = Box::new(
+        StdioTransport::new(MOCK_SERVER)
+            .credential_as("SERVER_TOKEN", CredentialRef::from_env_var(REF_A))
+            .credential_as("SERVER_API_URL", CredentialRef::from_env_var(REF_B)),
+    );
+    let cap = McpCapability::new(
+        name.clone(),
+        version.clone(),
+        McpEndpointId("stdio://mock".into()),
+        "echo",
+        transport,
+    );
+
+    let store = Arc::new(InMemoryContentStore::new());
+    let broker = LocalCapabilityBroker::new(store.clone());
+    broker.register_capability(Box::new(cap));
+
+    let mote = sample_mote(&name, &version);
+    let mut warrant = warrant_granting(&name, &version);
+    warrant.secret_scope = SecretScope::AllowList(BTreeSet::from([
+        SecretRef(REF_A.to_string()),
+        SecretRef(REF_B.to_string()),
+    ]));
+    let req = effect(r#"{"q":"hi"}"#);
+    let payload = req.payload.clone();
+
+    let handle = broker.dispatch(&mote, &warrant, &name, req).unwrap();
+    let staged = store.get(&handle.staged_ref).unwrap();
+    let provenance = format!("{handle:?}");
+
+    // ⚠ THE CONTROL FIRST. Every assertion below is an ABSENCE, and an absence proves
+    // nothing unless the same search can find the thing when it IS there. Plant each
+    // secret in a buffer of the same shape and require the scan to catch it — otherwise a
+    // `contains` that never matches anything would read as perfect hygiene.
+    for planted in [SECRET_A, SECRET_B] {
+        let bait = format!("prefix {planted} suffix").into_bytes();
+        assert!(
+            contains(&bait, planted.as_bytes()),
+            "the scanner can see {planted} when it is present — without this the \
+             absences below are vacuous"
+        );
+    }
+
+    for secret in [SECRET_A, SECRET_B] {
+        let bytes = secret.as_bytes();
+        assert!(
+            !contains(&payload, bytes),
+            "{secret} leaked into EffectRequest.payload"
+        );
+        assert!(
+            !provenance.contains(secret),
+            "{secret} leaked into BrokerHandle provenance"
+        );
+        assert!(
+            !contains(&staged, bytes),
+            "{secret} leaked into the staged result"
+        );
+        assert!(
+            !contains(mote.id.as_bytes(), bytes),
+            "{secret} leaked into the MoteId"
+        );
+    }
+
+    // The variable NAMES are not secrets, but they must not smuggle values along with
+    // them: assert the staged bytes carry neither name paired with its value.
+    for (var, secret) in [("SERVER_TOKEN", SECRET_A), ("SERVER_API_URL", SECRET_B)] {
+        assert!(
+            !contains(&staged, format!("{var}={secret}").as_bytes()),
+            "{var} was staged with its value attached"
+        );
+    }
+
+    std::env::remove_var(REF_A);
+    std::env::remove_var(REF_B);
+}
+
 /// D110.3 — data minimization: a role that does NOT grant the capability's
 /// secret is refused at dispatch (the capability declares `required_secret_scope`
 /// = its configured credential; the broker gates it `⊆ warrant.secret_scope`).

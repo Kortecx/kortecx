@@ -521,6 +521,21 @@ The four connectors are one command each, and only if you want them: `cargo inst
 integrations/kx-connector-gmail` (and friends) puts each beside `kx`. Check what resolved with
 `kx connections doctor`.
 
+Any other MCP server works too, including ones configured entirely through environment
+variables. Store each value as a named secret and point the variable at the name — the value is
+read when the server starts and never written to disk:
+
+```bash
+kx secrets set --name gitlab-token --value '…'
+kx secrets set --name gitlab-url   --value 'https://gitlab.example.com/api/v4'
+kx connections add --name gitlab --command mcp-server-gitlab \
+  --env GITLAB_PERSONAL_ACCESS_TOKEN=gitlab-token \
+  --env GITLAB_API_URL=gitlab-url
+```
+
+Its tools then appear to agents as `gitlab/<tool>`. `kx connections list` shows which variables a
+connector is configured with, by name — never the secrets behind them.
+
 Swap `serve-engine` for `inference` to build the in-process llama.cpp engine — that needs CMake, a
 C++ toolchain, and the `crates/kx-llamacpp-sys/llama.cpp` submodule. Building the console from
 source needs Node ≥ 22. Hosted apps need Node and npm at run time.

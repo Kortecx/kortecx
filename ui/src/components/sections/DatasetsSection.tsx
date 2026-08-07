@@ -28,7 +28,7 @@ function CloudCard({ label, detail }: { label: string; detail: string }) {
  * (rendering hits through the multi-modal {@link AssetViewer}), and a text-ingest
  * form. Backed by the additive ListDatasets / QueryDataset / FuzzyDiscovery /
  * IngestDocuments RPCs over an in-process HNSW ANN index (`kx-dataset-hnsw`). Text
- * ingest/search need a server embedder (`kx serve --features inference`); the SDK's
+ * ingest/search need a server embedder (a serve built with inference); the SDK's
  * FFI-free client-vector path needs none. Retrieval scores are DISPLAY-only.
  *
  * Honest Cloud boundary: vector retrieval + deterministic synthesis run

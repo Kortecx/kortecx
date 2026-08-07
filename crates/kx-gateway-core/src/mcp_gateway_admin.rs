@@ -38,6 +38,10 @@ pub struct McpServerRegistration {
     pub tls_required: bool,
     /// OPTIONAL secret-less credential ref NAME (env var / vault key) — never the secret.
     pub credential_ref: Option<String>,
+    /// stdio: the by-reference environment map, `(variable NAME, credential ref NAME)`.
+    /// Both halves are names — no secret VALUE crosses this seam, which is what lets a
+    /// server needing several variables be registered without putting anything at rest.
+    pub env: Vec<(String, String)>,
     /// PR-6b-3: `"stateful"` | `"stateless"`; empty ⇒ `"stateless"` (the default).
     pub session_mode: String,
 }
@@ -60,6 +64,9 @@ pub struct McpServerView {
     pub tool_count: u32,
     /// Whether a credential ref NAME is attached (never the value, D81).
     pub credential_ref_present: bool,
+    /// The environment variable NAMES this server is configured with — names only,
+    /// neither the values nor the refs behind them.
+    pub env_names: Vec<String>,
     /// PR-6b-3: the firing posture — `"stateful"` | `"stateless"`.
     pub session_mode: String,
 }

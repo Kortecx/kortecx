@@ -51,7 +51,7 @@ Memory is off by default (it is a new per-principal store). Turn it on with a se
 (for embedding), the `hnsw` index, and the `KX_SERVE_MEMORY` flag:
 
 ```bash
-KX_SERVE_MEMORY=1 kx serve --features inference,hnsw --model <a-gemma-model>
+KX_SERVE_MEMORY=1 kx serve --model <a-gemma-model>
 ```
 
 Without it, the memory commands + RPCs answer `Unimplemented` honestly.

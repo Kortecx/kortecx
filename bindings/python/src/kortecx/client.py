@@ -340,6 +340,7 @@ class _Connections:
         args: Optional[Sequence[str]] = None,
         tls_required: bool = False,
         credential_ref: str = "",
+        env: Optional[Mapping[str, str]] = None,
         session_mode: str = "stateless",
     ) -> "RegisterServerResult":
         """Register (dial + discover) a connector. See ``register_mcp_server``."""
@@ -350,6 +351,7 @@ class _Connections:
             args=args,
             tls_required=tls_required,
             credential_ref=credential_ref,
+            env=env,
             session_mode=session_mode,
         )
 
@@ -2527,6 +2529,7 @@ class KxClient:
         args: Optional[Sequence[str]] = None,
         tls_required: bool = False,
         credential_ref: str = "",
+        env: Optional[Mapping[str, str]] = None,
         session_mode: str = "stateless",
     ) -> RegisterServerResult:
         """Register an EXTERNAL MCP server (PR-6b-1 ``RegisterMcpServer``) — the
@@ -2541,12 +2544,26 @@ class KxClient:
         (``permission_denied``). A dial failure is NOT fatal — the server persists
         with ``health="unreachable"`` (honest, never a fabricated success).
 
+        ``env`` gives a stdio server the environment it needs, BY REFERENCE: each key
+        is a variable the server reads, each value NAMES a stored secret that supplies
+        it. Both halves are names, so nothing is stored at rest — the value resolves at
+        spawn and is dropped. A server needing two variables needs two entries::
+
+            kx.register_mcp_server(
+                name="gitlab",
+                endpoint="mcp-server-gitlab",
+                env={
+                    "GITLAB_PERSONAL_ACCESS_TOKEN": "gitlab-token",
+                    "GITLAB_API_URL": "gitlab-url",
+                },
+            )
+
         ``session_mode`` is the firing posture (PR-6b-3): ``"stateless"`` (the
         default — a self-contained single-shot session per call, best for
         idempotent read tools and servers behind a round-robin load balancer) or
         ``"stateful"`` (one reused long-lived session, for servers that require it
         or chatty same-server traffic)."""
-        req = _g.RegisterMcpServerRequest(
+        base = _g.RegisterMcpServerRequest(
             server_name=name,
             transport=transport,
             endpoint=endpoint,
@@ -2555,7 +2572,17 @@ class KxClient:
             credential_ref=credential_ref,
             session_mode=session_mode,
         )
-        resp = self._call(lambda: self._stub.RegisterMcpServer(req, metadata=self._md))
+        entries = [_g.McpEnvEntry(name=var, credential_ref=ref) for var, ref in (env or {}).items()]
+        # One call either way. The environment map rides a separate RPC because the plain
+        # registration request is also what a natural-language proposal displays, and an
+        # environment is not something a model may propose.
+        if entries:
+            with_env = _g.RegisterMcpServerEnvRequest(base=base, env=entries)
+            resp = self._call(
+                lambda: self._stub.RegisterMcpServerWithEnv(with_env, metadata=self._md)
+            )
+        else:
+            resp = self._call(lambda: self._stub.RegisterMcpServer(base, metadata=self._md))
         return RegisterServerResult(
             connection_id=hexids.encode(resp.connection_id),
             discovered=resp.discovered,

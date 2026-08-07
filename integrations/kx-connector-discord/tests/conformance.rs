@@ -19,6 +19,7 @@ fn discord_connector(credential_ref: Option<String>) -> ConnectorUnderTest {
             args: vec![],
         },
         credential_ref,
+        env: Vec::new(),
         session_mode: SessionMode::Stateless,
     }
 }

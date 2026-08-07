@@ -256,6 +256,10 @@ pub const fn facet(rpc: GatewayRpc) -> Facet {
         // CallMcpTool reaches the world through a connector, so it MUTATES even
         // though it reads from the caller's point of view.
         GatewayRpc::RegisterMcpServer => Facet::new(D::Connectors, M, CP),
+        // Same domain, mutability and authority as its sibling — it IS the same operation.
+        // What differs is only that the environment map rides a request the NL preview
+        // cannot carry.
+        GatewayRpc::RegisterMcpServerWithEnv => Facet::new(D::Connectors, M, CP),
         GatewayRpc::ListMcpServers => Facet::new(D::Connectors, R, CP),
         GatewayRpc::DiscoverServerTools => Facet::new(D::Connectors, R, CP),
         GatewayRpc::TestMcpServer => Facet::new(D::Connectors, R, CP),

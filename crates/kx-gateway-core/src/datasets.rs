@@ -199,7 +199,7 @@ pub(crate) fn dataset_status(err: DatasetError) -> Status {
         }
         DatasetError::EmbedderUnavailable => Status::failed_precondition(
             "no embedding model wired: provide vectors client-side, or run \
-             `kx serve --features inference` with a model",
+             `kx serve` on a build with inference, with a model",
         ),
         DatasetError::StaleIndex(detail) => Status::failed_precondition(detail),
         DatasetError::Internal(detail) => Status::internal(detail),

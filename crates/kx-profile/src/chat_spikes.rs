@@ -127,7 +127,7 @@ pub async fn measure(channel: &Channel, opts: &ChatOpts) -> Result<ChatSamples, 
     .ok_or_else(|| {
         ProfileError::Client(
             "no served model on the attached serve (an FFI-free build with no engine \
-             answers ListModels empty; launch `kx serve` with --features serve-engine \
+             answers ListModels empty; launch `kx serve` on a build with serve-engine \
              [+ a running Ollama daemon] or --features inference [+ a GGUF])"
                 .to_string(),
         )
