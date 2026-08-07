@@ -41,7 +41,8 @@ const VAR_TOKEN: &str = "GITLAB_PERSONAL_ACCESS_TOKEN";
 const VAR_API_URL: &str = "GITLAB_API_URL";
 const TOKEN_REF: &str = "KX_W3_LIVE_TOKEN_REF";
 const API_URL_REF: &str = "KX_W3_LIVE_API_URL_REF";
-const GOOD_TOKEN: &str = "glpat-w3-live-0123456789";
+// Not shaped like a real provider token — see the sibling in `connector_env_map`.
+const GOOD_TOKEN: &str = "kx-test-live-credential-value";
 const MARKER: &str = "kortecx/w3-live-env-map";
 
 fn gitlab_server_bin() -> Option<PathBuf> {
