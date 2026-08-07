@@ -52,8 +52,12 @@ use tonic::transport::Channel;
 const VAR_TOKEN: &str = "GITLAB_PERSONAL_ACCESS_TOKEN";
 const VAR_API_URL: &str = "GITLAB_API_URL";
 
-const GOOD_TOKEN: &str = "glpat-w3-expected-0123456789";
-const WRONG_TOKEN: &str = "glpat-w3-rejected-9876543210";
+// Deliberately NOT shaped like a real GitLab PAT. A fixture carrying a live provider's
+// prefix trains a secret scanner's readers to dismiss that pattern, which is how a genuine
+// leak eventually gets waved through — and the brain's pre-push gitleaks flags these on
+// sight, correctly. The server only compares them for equality; the shape is ours to pick.
+const GOOD_TOKEN: &str = "kx-test-expected-credential-value";
+const WRONG_TOKEN: &str = "kx-test-rejected-credential-value";
 
 /// The credential ref NAMES for one test, all carrying that test's own suffix.
 ///
