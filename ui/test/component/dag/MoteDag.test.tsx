@@ -8,7 +8,16 @@
 
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+/** The sizes reactflow's store would publish after measuring. Mutable so a test can
+ *  stand in for "the browser has measured the cards" — jsdom never will. */
+const measured = vi.hoisted(() => ({
+  current: [] as { id: string; measured?: { width?: number; height?: number } }[],
+}));
+
+/** The canvas size reactflow would publish. 0x0 = unmeasured (jsdom's real state). */
+const container = vi.hoisted(() => ({ current: { width: 0, height: 0 } }));
 
 vi.mock("@xyflow/react", () => ({
   ReactFlow: ({ nodes, edges }: { nodes: unknown[]; edges: unknown[] }) => (
@@ -20,6 +29,17 @@ vi.mock("@xyflow/react", () => ({
   MiniMap: () => null,
   useReactFlow: () => ({ fitView: () => {} }),
   useNodesInitialized: () => false,
+  // The store the selector reads. jsdom measures nothing, so the default is an
+  // EMPTY lookup — the same shape as a real first paint, which must fall back to the
+  // declared box. A test opts in by populating `measured`.
+  useStore: (sel: (s: unknown) => unknown) =>
+    sel({
+      nodeLookup: new Map(measured.current.map((n) => [n.id, n])),
+      // No measured container in jsdom — layoutForContainer must then keep TB rather
+      // than choose a direction from a zero.
+      width: container.current.width,
+      height: container.current.height,
+    }),
   Handle: () => null,
   Position: { Top: "top", Bottom: "bottom" },
   MarkerType: { ArrowClosed: "arrowclosed", Arrow: "arrow" },
@@ -36,6 +56,7 @@ import {
   fanInProjection,
   growsBetweenPolls,
   largeProjection,
+  nid,
   projection,
   reactChainProjection,
   turnId,
@@ -47,6 +68,12 @@ const vm = (p: ReturnType<typeof projection>) => toProjectionVM(p);
 // canvas needs a connected context + query client. Fixtures carry no result refs
 // ⇒ the batch stays disabled; these tests assert nodes/edges/layout, not content.
 const wrapper = connectedWrapper(makeMockClient().client);
+
+// Every test starts UNMEASURED (a real first paint); the measured arm opts in.
+afterEach(() => {
+  measured.current = [];
+  container.current = { width: 0, height: 0 };
+});
 
 describe("MoteDag", () => {
   it("renders the canvas with one node per Mote + one edge per parent (diamond)", () => {
@@ -77,7 +104,7 @@ describe("MoteDag", () => {
   });
 
   it("does NOT relayout on a state-only poll (no dagre thrash)", () => {
-    const spy = vi.spyOn(layout, "layoutGraph");
+    const spy = vi.spyOn(layout, "layoutForContainer");
     const [, grown, stateOnly] = growsBetweenPolls();
     const { rerender } = render(<MoteDag projection={vm(grown)} />, { wrapper });
     const afterFirst = spy.mock.calls.length;
@@ -88,7 +115,7 @@ describe("MoteDag", () => {
   });
 
   it("relayouts when the topology grows (a dynamic child appears)", () => {
-    const spy = vi.spyOn(layout, "layoutGraph");
+    const spy = vi.spyOn(layout, "layoutForContainer");
     const [rootOnly, grown] = growsBetweenPolls();
     const { rerender } = render(<MoteDag projection={vm(rootOnly)} />, { wrapper });
     const afterFirst = spy.mock.calls.length;
@@ -130,7 +157,7 @@ describe("MoteDag — an agentic run's chain", () => {
   it("dagre SEES the derived edges (or the turns lay out as disconnected roots)", () => {
     // The failure this catches is subtle and worse than the original bug: the nodes all
     // render, but as a wide row of unconnected pairs, because turn Motes are parentless.
-    const spy = vi.spyOn(layout, "layoutGraph");
+    const spy = vi.spyOn(layout, "layoutForContainer");
     render(<MoteDag projection={agentic(3)} />, { wrapper });
     const edgesPassed = spy.mock.calls[0]?.[1] ?? [];
     expect(edgesPassed.filter((e) => e.derived === true)).toHaveLength(2);
@@ -164,5 +191,62 @@ describe("MoteDag — an agentic run's chain", () => {
     // No Mote in the chain has ≥2 inbound Data parents, so nothing may read as a fan-in.
     render(<MoteDag projection={agentic(3)} />, { wrapper });
     expect(screen.queryByTestId("swarm-overview")).not.toBeInTheDocument();
+  });
+});
+
+describe("MoteDag — the layout box comes from the rendered card", () => {
+  /** Stand in for reactflow having measured the cards at `h` px tall. */
+  const measure = (ids: readonly string[], h: number) => {
+    measured.current = ids.map((id) => ({ id, measured: { width: 184, height: h } }));
+  };
+
+  it("hands dagre the MEASURED height, not the declared constant", () => {
+    const spy = vi.spyOn(layout, "layoutForContainer");
+    const ids = [0, 1, 2, 3].map((i) => nid(i));
+    measure(ids, 155);
+    render(<MoteDag projection={vm(chainProjection(4))} />, { wrapper });
+    // The last call is the one that ran with the measurement in hand.
+    const box = spy.mock.calls.at(-1)?.[2];
+    expect(box?.nodeH).toBe(155);
+    expect(box?.nodeW).toBe(184);
+    for (const id of ids) {
+      expect(box?.nodeHeights?.get(id)).toBe(155);
+    }
+    // The defect this pins: NODE_H is 72, and a card more than twice that tall was
+    // laid out as if it were 72, so consecutive ranks were placed inside each other.
+    expect(box?.nodeH).not.toBe(layout.NODE_H);
+    spy.mockRestore();
+  });
+
+  it("falls back to the declared box while nothing is measured (first paint)", () => {
+    const spy = vi.spyOn(layout, "layoutForContainer");
+    render(<MoteDag projection={vm(chainProjection(4))} />, { wrapper });
+    expect(spy.mock.calls.at(-1)?.[2]).toEqual({});
+    spy.mockRestore();
+  });
+
+  it("relayouts when a card's measured height CHANGES (a row appears)", () => {
+    const ids = [0, 1, 2, 3].map((i) => nid(i));
+    measure(ids, 155);
+    const { rerender } = render(<MoteDag projection={vm(chainProjection(4))} />, { wrapper });
+    const spy = vi.spyOn(layout, "layoutForContainer");
+    const before = spy.mock.calls.length;
+    measure(ids, 260); // the card grows a row
+    rerender(<MoteDag projection={vm(chainProjection(4))} />);
+    expect(spy.mock.calls.length).toBeGreaterThan(before);
+    expect(spy.mock.calls.at(-1)?.[2]?.nodeH).toBe(260);
+    spy.mockRestore();
+  });
+
+  it("does NOT relayout when the measured sizes are unchanged", () => {
+    const ids = [0, 1, 2, 3].map((i) => nid(i));
+    measure(ids, 155);
+    const { rerender } = render(<MoteDag projection={vm(chainProjection(4))} />, { wrapper });
+    const spy = vi.spyOn(layout, "layoutForContainer");
+    const before = spy.mock.calls.length;
+    measure(ids, 155); // same sizes, new array identity — must not thrash dagre
+    rerender(<MoteDag projection={vm(chainProjection(4))} />);
+    expect(spy.mock.calls.length).toBe(before);
+    spy.mockRestore();
   });
 });

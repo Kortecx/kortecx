@@ -41,6 +41,13 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Changed
 
+- **A step on a run's graph now says which turn it was and which tool it ran.** A step was
+  labelled with an internal identifier and a determinism class — `f3da775e…4f64 /
+  READ_ONLY_NONDET` — while the Timeline tab described the same step of the same run as
+  `Turn 0 · MCP · mcp-echo/echo@1`. The graph now shows the turn, the kind of step and the tool
+  and version it called, in the same words the Timeline uses, from the same records; the full
+  identifier is still one click away in the step's detail panel.
+
 - **Tools → Integrations and Tools → Connections are now one Connectors surface.** They
   described the same registry from opposite ends: one listed the connectors that ship in the
   box and could only print a command to copy into a terminal, the other listed what was
@@ -109,6 +116,20 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
   moved with them.
 
 ### Fixed
+
+- **Steps on a run's graph no longer draw on top of one another.** The graph reserved a fixed
+  box per step that was less than half the height a step card actually occupies, so on a run of
+  more than a couple of steps the rows were placed closer together than the cards are tall and
+  the cards overlapped — on a four-turn agent run, half of all step pairs. The graph now measures
+  a rendered card and lays out against that, so a card that grows a row moves the layout with it
+  instead of re-opening the same problem.
+
+- **The run graph is sized and oriented for the window it is in.** The canvas was a fixed height
+  regardless of screen, and always stacked steps top-to-bottom — so a long agent run in a short,
+  wide window was drawn tiny with most of the canvas empty. The canvas now scales with the
+  viewport, re-fits when the window is resized, and lays a run out left-to-right when that
+  genuinely fits better, keeping top-to-bottom otherwise so a small resize cannot spin the
+  picture around.
 
 - **The run view can now isolate an agentic run started with `Invoke`.** The identifier the
   server returned for such runs named an internal placeholder that never appears in the run's

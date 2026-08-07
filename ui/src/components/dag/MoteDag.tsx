@@ -6,8 +6,9 @@ import {
   ReactFlowProvider,
   useNodesInitialized,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useResultMap } from "../../kx/use-content-batch";
 import type { ProjectionVM } from "../../kx/use-projection";
 import { useRunStepKinds } from "../../kx/use-run-step-kinds";
@@ -17,10 +18,10 @@ import { MoteNode } from "./MoteNode";
 import { NodeDetailDrawer } from "./NodeDetailDrawer";
 import { SwarmOverview } from "./SwarmOverview";
 import { buildEdges, topologyHash } from "./dag-graph";
-import { derivedChainEdges } from "./derived-lineage";
+import { agenticTurnLabels, derivedChainEdges } from "./derived-lineage";
 import { buildFlowEdges, buildFlowNodes, miniMapColor } from "./flow";
 import type { MoteFlowNode } from "./flow";
-import { layoutGraph } from "./layout";
+import { type NodeBox, layoutForContainer } from "./layout";
 import { branchEdgeIds, detectSwarm } from "./swarm-shape";
 
 /** Stable empty roster — an inline `[]` would re-run every memo keyed on it. */
@@ -39,31 +40,135 @@ export const MAX_DAG_NODES = 500;
 // render, a known reactflow performance footgun.
 const nodeTypes = { mote: MoteNode };
 
+/** Stable identity for "nothing measured yet" — falls through to layout.ts's declared
+ *  NODE_W/NODE_H. A fresh `{}` per render would re-run every memo keyed on the box. */
+const DECLARED_BOX: NodeBox = {};
+
 function DagFlow({ projection }: { projection: ProjectionVM }) {
   const motes = projection.motes;
   // The agent's turn order, which the runtime records OFF-DAG (turn Motes are edge-free
   // by design). These edges are synthesised, flagged `derived`, and drawn differently.
   const roster = projection.agenticTurnIds ?? NO_ROSTER;
   const derived = useMemo(() => derivedChainEdges(roster, motes), [roster, motes]);
+  // The turn facts each node names itself with, off the rows the roster came from —
+  // no extra request, and the same words the Timeline prints for that turn.
+  const chainRows = projection.agenticTurnRows;
+  const turnLabels = useMemo(
+    () => (chainRows ? agenticTurnLabels(chainRows) : undefined),
+    [chainRows],
+  );
   const topoHash = useMemo(() => topologyHash(motes, derived), [motes, derived]);
   // The clicked Mote (drawer). Selection is for the DETAIL overlay only — reactflow's
   // own `elementsSelectable` stays OFF, so this never perturbs nodes/edges/layout.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = selectedId ? (motes.find((mm) => mm.moteId === selectedId) ?? null) : null;
 
-  // Relayout ONLY when the topology hash changes; a state-only poll reuses the
-  // cached positions (the no-thrash invariant — see dag-graph.topologyHash).
+  // The box dagre reserves per node, READ BACK from what the browser laid out rather
+  // than declared as a constant. `.dag-node` is a flex column — an added row, a longer
+  // result preview or a larger root font all change its height, and a constant cannot
+  // track any of them. reactflow measures every node and republishes the size on
+  // `measured`, so the sizes below are the rendered card's, by construction.
+  //
+  // Two passes, and that is inherent: nothing can be measured before it is rendered.
+  // The first pass lays out against the CSS defaults, the measurement arrives, and the
+  // second pass corrects it. It converges because a node's measured size depends on its
+  // CONTENT and not on where it was placed — moving a card cannot resize it.
+  //
+  // ⚠ SUBSCRIBE TO A STRING, NEVER TO THE NODE ARRAY. `useNodes()` re-renders this
+  // component on EVERY store change, and reactflow's store is a round trip for our own
+  // `nodes` prop — so any value feeding that prop which is not reference-stable closes a
+  // cycle: render → new `nodes` → setNodes → store change → render. `useRunStepKinds`
+  // returns a fresh Map per render and is exactly such a value, so subscribing to the
+  // array tore the tree down with React #185 ("maximum update depth exceeded"), which
+  // surfaces as the run view's error boundary and says nothing about layout.
+  //
+  // Selecting a STRING fixes it by construction: reactflow compares the selected value,
+  // so this component re-renders only when a measured SIZE actually changes — which is
+  // also precisely when the layout may move. Positions changing cannot resize a card,
+  // so the corrective second pass has nothing left with which to trigger a third.
+  const rawSizeKey = useStore((s) => {
+    let key = "";
+    for (const [id, n] of s.nodeLookup) {
+      key += `${id}:${n.measured?.width ?? 0}x${n.measured?.height ?? 0};`;
+    }
+    return key;
+  });
+  // ⚠ LATCH the last size a node was actually measured at. Handing reactflow a new
+  // `nodes` array makes it re-adopt every node, and re-adoption drops `measured` until
+  // the next measuring pass — so the raw key above dips through zero after every single
+  // relayout. Read raw, that dip reverts the box to the declared default, which moves
+  // the nodes, which triggers another re-adoption: the graph oscillates and its nodes
+  // stay `visibility: hidden` (measured-less) for good. Keeping the last known size
+  // makes the dip invisible, so a relayout settles in one pass.
+  const latch = useRef(new Map<string, string>());
+  const sizeKey = useMemo(() => {
+    const live = new Set<string>();
+    for (const entry of rawSizeKey.split(";")) {
+      if (!entry) {
+        continue;
+      }
+      const [id, dims] = entry.split(":");
+      if (!id) {
+        continue;
+      }
+      live.add(id);
+      const [w, h] = (dims ?? "").split("x").map(Number);
+      if (w && h) {
+        latch.current.set(id, `${w}x${h}`);
+      }
+    }
+    for (const id of [...latch.current.keys()]) {
+      if (!live.has(id)) {
+        latch.current.delete(id); // the Mote left the graph — forget its size
+      }
+    }
+    return [...latch.current]
+      .map(([id, dims]) => `${id}:${dims}`)
+      .sort()
+      .join(";");
+  }, [rawSizeKey]);
+  // The canvas's own measured size, as a primitive for the same reason as `sizeKey`.
+  // reactflow tracks its container and updates this on every resize — a window resize,
+  // a drawer opening, a laptop docked to an external display — so the layout below is
+  // recomputed against the space actually available rather than a fixed assumption.
+  const viewport = useStore((s) => `${Math.round(s.width)}x${Math.round(s.height)}`);
+  const box = useMemo<NodeBox>(() => {
+    const nodeHeights = new Map<string, number>();
+    let widest = 0;
+    for (const entry of sizeKey.split(";")) {
+      if (!entry) {
+        continue;
+      }
+      const [id, dims] = entry.split(":");
+      const [w, h] = (dims ?? "").split("x").map(Number);
+      if (!id || !w || !h) {
+        continue; // never latched a real size for this node yet
+      }
+      nodeHeights.set(id, h);
+      widest = Math.max(widest, w);
+    }
+    if (nodeHeights.size === 0) {
+      return DECLARED_BOX;
+    }
+    return { nodeW: widest, nodeH: Math.max(...nodeHeights.values()), nodeHeights };
+  }, [sizeKey]);
+
+  // Relayout when the topology hash changes, or when a MEASURED SIZE changes; a
+  // state-only poll moves neither and reuses the cached positions (the no-thrash
+  // invariant — see dag-graph.topologyHash).
   // The DERIVED edges go to dagre too: without them an agent run's turns are N
   // parentless roots and lay out as a wide row of disconnected pairs.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: relayout is intentionally keyed on the topology hash only (which now folds in the derived edges) — a state-only poll must NOT relayout.
-  const positions = useMemo(
-    () =>
-      layoutGraph(
-        motes.map((m) => m.moteId),
-        [...buildEdges(motes), ...derived],
-      ),
-    [topoHash],
-  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: relayout is intentionally keyed on the topology hash + the measured box + the container size — a state-only poll moves none of them.
+  const laidOut = useMemo(() => {
+    const [w, h] = viewport.split("x").map(Number);
+    return layoutForContainer(
+      motes.map((m) => m.moteId),
+      [...buildEdges(motes), ...derived],
+      box,
+      { width: w ?? 0, height: h ?? 0 },
+    );
+  }, [topoHash, box, viewport]);
+  const positions = laidOut.positions;
   // The swarm shape (gather + branch fan-in) is topology-derived — recompute only on
   // a topology change; the branch/gather STRUCTURE is stable across a state-only poll.
   // biome-ignore lint/correctness/useExhaustiveDependencies: structure depends on topology only (same justification as positions/edges).
@@ -85,8 +190,16 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
   const stepKinds = useRunStepKinds(projection.instanceId, motes);
   // Node DATA (state/anomaly + resolved result + step type) re-merges each poll WITHOUT relayout.
   const nodes = useMemo(
-    () => buildFlowNodes(motes, positions, { byRef, loading: isLoading }, gatherId, stepKinds),
-    [motes, positions, byRef, isLoading, gatherId, stepKinds],
+    () =>
+      buildFlowNodes(
+        motes,
+        positions,
+        { byRef, loading: isLoading },
+        gatherId,
+        stepKinds,
+        turnLabels,
+      ),
+    [motes, positions, byRef, isLoading, gatherId, stepKinds, turnLabels],
   );
 
   // Refit the viewport when the topology grows (dynamic children appear) AND once
@@ -96,7 +209,7 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
   // paint in the chat (T-FIX1). Guarded so a headless/jsdom flow is a no-op.
   const { fitView } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: topoHash is an intentional re-fit trigger (refit when the graph grows), not read in the body.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: topoHash, box and viewport are intentional re-fit triggers (refit when the graph grows, when a measured card size moves the layout, or when the canvas is resized), not read in the body.
   useEffect(() => {
     if (!nodesInitialized) {
       return;
@@ -106,7 +219,7 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
     } catch {
       /* no measured viewport (headless) — ignore */
     }
-  }, [topoHash, nodesInitialized, fitView]);
+  }, [topoHash, box, viewport, nodesInitialized, fitView]);
 
   return (
     <>

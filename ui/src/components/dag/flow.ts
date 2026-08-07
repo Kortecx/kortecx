@@ -12,6 +12,7 @@ import type { DecodedContent } from "../../lib/content-decode";
 import type { StepType } from "../../lib/step-kind";
 import { buildEdges } from "./dag-graph";
 import type { GraphEdge } from "./dag-graph";
+import type { AgenticTurnLabel } from "./derived-lineage";
 import { toRfEdge } from "./edges";
 import type { XY } from "./layout";
 
@@ -49,6 +50,9 @@ export interface MoteNodeData {
   readonly swarmRole?: "gather";
   /** PR-D: the high-level step type (model/MCP/connector/tool/action) for the review. */
   readonly stepType?: StepType;
+  /** This Mote is an agent TURN, and these are the turn's own facts — the node names
+   *  the turn and its tool instead of a Mote hash. Absent for a non-agentic Mote. */
+  readonly turnLabel?: AgenticTurnLabel;
   readonly [key: string]: unknown;
 }
 
@@ -72,6 +76,7 @@ export function buildFlowNodes(
   results?: ResultLookup,
   gatherId?: string,
   stepKinds?: ReadonlyMap<string, StepType>,
+  turnLabels?: ReadonlyMap<string, AgenticTurnLabel>,
 ): MoteFlowNode[] {
   return motes.map((m) => {
     const vm = m.resultRef ? results?.byRef.get(m.resultRef) : undefined;
@@ -86,6 +91,7 @@ export function buildFlowNodes(
         resultLoading: m.resultRef ? (results?.loading ?? false) : false,
         swarmRole: m.moteId === gatherId ? "gather" : undefined,
         stepType: stepKinds?.get(m.moteId),
+        turnLabel: turnLabels?.get(m.moteId),
       },
       draggable: false,
     };

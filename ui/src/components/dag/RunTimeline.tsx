@@ -15,31 +15,11 @@
 import { type ProjectionVM, allTerminal } from "../../kx/use-projection";
 import { type ReactTurnVM, useReactProgress } from "../../kx/use-react-progress";
 import { useRunStepKinds } from "../../kx/use-run-step-kinds";
-import { STEP_LABEL, type StepType, classifyStep } from "../../lib/step-kind";
+import { STEP_LABEL } from "../../lib/step-kind";
+// The turn's words live in one module, read by this timeline AND by the graph node
+// that draws the same turn — see lib/turn-label.
+import { branchLabel, turnStepType } from "../../lib/turn-label";
 import { RunChanges } from "./RunChanges";
-
-/** The badge step-type for a turn: a `tool` turn is classified from its fired tool
- *  (no GetMoteDetail — cheaper + honest); every other branch is the model reasoning /
- *  answer turn. */
-function turnStepType(t: ReactTurnVM): StepType {
-  return t.branch === "tool" ? classifyStep("TOOL", { [t.toolId]: "" }) : "model";
-}
-
-/** A short human phrase for the turn's branch (the card's status line). */
-function branchLabel(t: ReactTurnVM): string {
-  switch (t.branch) {
-    case "tool":
-      return `${t.toolId}@${t.toolVersion}`;
-    case "answer":
-      return "answered";
-    case "rejected":
-      return "tool proposal rejected";
-    case "dead_lettered":
-      return "dead-lettered";
-    default:
-      return "thinking…";
-  }
-}
 
 function TurnCard({ turn }: { turn: ReactTurnVM }) {
   const kind = turnStepType(turn);

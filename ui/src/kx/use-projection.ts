@@ -58,6 +58,12 @@ export interface ProjectionVM {
    * synthesised edges that draw the turn order. Absent ⇒ nothing to draw.
    */
   readonly agenticTurnIds?: readonly string[];
+  /**
+   * The chain's own turn rows — the SAME rows {@link agenticTurnIds} is built from, so
+   * labelling a node with its turn index, branch and fired `tool_id@version` costs no
+   * extra request. Carried raw; the graph chunk turns them into labels.
+   */
+  readonly agenticTurnRows?: readonly AgenticTurnRow[];
 }
 
 /** Map the SDK's `Projection` (class) to the plain VM the views consume. */
@@ -208,13 +214,23 @@ export function scopeProjection(
   return { ...p, motes: [...componentOfAny(p.motes, anchors)], scopeMissed: false };
 }
 
-/** One `ListReactTurns` row, narrowed to what the roster needs. */
-interface ReactRowLike {
+/**
+ * One `ListReactTurns` row, narrowed to what the roster and the node labels need.
+ *
+ * ⚠ `toolId`/`toolVersion` are on the wire and were simply being dropped here — which
+ * is why the graph drew a Mote hash for a turn the Timeline could name. They are
+ * carried, not derived: this module is in the EAGER entry chunk, so it hands the rows
+ * on and the lazy graph chunk does the deriving (see `dag/derived-lineage`).
+ */
+export interface AgenticTurnRow {
   readonly turn: number;
   readonly callIndex: number;
   readonly branch: string;
   readonly turnMoteId: string;
+  readonly toolId?: string;
+  readonly toolVersion?: string;
 }
+type ReactRowLike = AgenticTurnRow;
 
 /**
  * The ordered node roster of one agentic chain, from its `ListReactTurns` rows.
@@ -304,6 +320,7 @@ export function useProjection(instanceId: string | undefined, opts: UseProjectio
       // the run stays exactly as under-rendered as before. Membership finds the right
       // chain in both shapes, and can never select a different run's.
       let roster: readonly string[] = [];
+      let chainRows: readonly AgenticTurnRow[] | undefined;
       if (scopeMoteId) {
         try {
           const page = await client.listReactTurns({ instanceId, limit: CHAIN_PAGE });
@@ -320,10 +337,9 @@ export function useProjection(instanceId: string | undefined, opts: UseProjectio
               vm.motes.some((m) => m.moteId === scopeMoteId) && !own.has(scopeMoteId)
                 ? scopeMoteId
                 : undefined;
-            roster = agenticLineage(
-              page.turns.filter((r) => own.has(r.turnMoteId)),
-              launch,
-            );
+            const mineRows = page.turns.filter((r) => own.has(r.turnMoteId));
+            roster = agenticLineage(mineRows, launch);
+            chainRows = mineRows;
           }
         } catch {
           // A gateway without this RPC, or a transient failure. Degrade to the scope
@@ -335,7 +351,9 @@ export function useProjection(instanceId: string | undefined, opts: UseProjectio
       // table, artifacts, metrics, the per-mote detail fan-out — inherits one run's
       // worth of data, and the fan-out shrinks from workspace-sized to run-sized.
       const scoped = scopeProjection(vm, scopeMoteId, scopeFallbackMoteId, roster);
-      return roster.length > 0 ? { ...scoped, agenticTurnIds: roster } : scoped;
+      return roster.length > 0
+        ? { ...scoped, agenticTurnIds: roster, agenticTurnRows: chainRows }
+        : scoped;
     },
     refetchInterval: (query) => {
       if (atSeq != null) {

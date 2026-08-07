@@ -6,6 +6,7 @@ import { statePulse } from "../../app/motion";
 import { isTerminalState, stateVisual } from "../../lib/colors";
 import { shortHex } from "../../lib/format";
 import { STEP_LABEL } from "../../lib/step-kind";
+import { branchLabel, turnStepType } from "../../lib/turn-label";
 import { AnomalyBadge } from "../AnomalyBadge";
 import { NdClassBadge } from "../NdClassBadge";
 import { ResultPreview } from "../ResultPreview";
@@ -21,9 +22,13 @@ import type { MoteFlowNode } from "./flow";
  * The whole card is clickable (reactflow `onNodeClick` opens the detail drawer).
  */
 function MoteNodeImpl({ data }: NodeProps<MoteFlowNode>) {
-  const { mote, resultContent, resultMissing, resultLoading, swarmRole, stepType } = data;
+  const { mote, resultContent, resultMissing, resultLoading, swarmRole, stepType, turnLabel } =
+    data;
   const { tone } = stateVisual(mote.stateCode);
   const inFlight = !isTerminalState(mote.stateCode);
+  // An agent turn names itself the way the Timeline names it — same row, same words,
+  // from `lib/turn-label`. Everything else keeps the short Mote id it always had.
+  const kind = turnLabel ? turnStepType(turnLabel) : stepType;
   return (
     <m.div
       className={`dag-node dag-node--${tone}${swarmRole ? " dag-node--swarm" : ""}`}
@@ -43,26 +48,44 @@ function MoteNodeImpl({ data }: NodeProps<MoteFlowNode>) {
           className={`dag-node__dot${inFlight ? " dag-node__dot--pulse" : ""}`}
           aria-hidden="true"
         />
-        <span className="dag-node__id mono" title={mote.moteId}>
-          {shortHex(mote.moteId)}
-        </span>
+        {turnLabel ? (
+          <span className="dag-node__turn" data-testid="dag-node-turn" title={mote.moteId}>
+            Turn {turnLabel.turn}
+          </span>
+        ) : (
+          <span className="dag-node__id mono" title={mote.moteId}>
+            {shortHex(mote.moteId)}
+          </span>
+        )}
         {swarmRole === "gather" ? (
           <span className="chip chip--static dag-node__role">gather</span>
         ) : null}
       </div>
       <div className="dag-node__row">
         <StatePill stateCode={mote.stateCode} />
-        <NdClassBadge ndClass={mote.ndClass} />
-        {stepType ? (
+        {/* The determinism class is runtime machinery, and on a turn node the turn's own
+            branch says more to a reader. It stays on every non-turn Mote, and the full
+            detail is one click away in the drawer either way. */}
+        {turnLabel ? null : <NdClassBadge ndClass={mote.ndClass} />}
+        {kind ? (
           <span
-            className={`chip chip--static dag-node__step dag-node__step--${stepType}`}
+            className={`chip chip--static dag-node__step dag-node__step--${kind}`}
             data-testid="dag-node-step"
-            data-step={stepType}
+            data-step={kind}
           >
-            {STEP_LABEL[stepType]}
+            {STEP_LABEL[kind]}
           </span>
         ) : null}
       </div>
+      {turnLabel ? (
+        <div
+          className="dag-node__branch"
+          data-testid="dag-node-branch"
+          data-branch={turnLabel.branch}
+        >
+          {branchLabel(turnLabel)}
+        </div>
+      ) : null}
       {mote.resultRef ? (
         <div className="dag-node__result">
           {/* The resolved text glimpse; the chip + full result live in the
