@@ -14,7 +14,7 @@
  * (the same discipline as `dag-graph.ts`).
  */
 
-import type { MoteVM } from "../../kx/use-projection";
+import type { AgenticTurnRow, MoteVM } from "../../kx/use-projection";
 import type { GraphEdge } from "./dag-graph";
 
 /**
@@ -54,4 +54,41 @@ export function derivedChainEdges(
     });
   }
   return edges;
+}
+
+/** What a graph node says about the turn it draws — the same facts, from the same row,
+ *  that the Timeline's card reads. */
+export interface AgenticTurnLabel {
+  readonly turn: number;
+  readonly branch: string;
+  readonly toolId: string;
+  readonly toolVersion: string;
+}
+
+/**
+ * Each chain node's turn facts, keyed by the Mote that draws it.
+ *
+ * FIRST-WINS over the newest-first wire — the same dedupe rule `agenticLineage` applies,
+ * so a settled row supersedes the same turn's earlier pending one. No new request: these
+ * are the rows the roster was already built from, carried through the projection.
+ *
+ * Lives HERE, in the lazily-loaded graph chunk, rather than beside the roster in
+ * `use-projection`: that module is in the eager entry bundle, which is at a hard budget,
+ * and only the graph needs these labels.
+ */
+export function agenticTurnLabels(
+  rows: readonly AgenticTurnRow[],
+): ReadonlyMap<string, AgenticTurnLabel> {
+  const out = new Map<string, AgenticTurnLabel>();
+  for (const r of rows) {
+    if (!out.has(r.turnMoteId)) {
+      out.set(r.turnMoteId, {
+        turn: r.turn,
+        branch: r.branch,
+        toolId: r.toolId ?? "",
+        toolVersion: r.toolVersion ?? "",
+      });
+    }
+  }
+  return out;
 }

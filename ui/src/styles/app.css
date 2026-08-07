@@ -526,7 +526,12 @@ button:disabled {
 /* ---- live DAG ---- */
 .dag-canvas {
   position: relative; /* containing block for the node-detail drawer + scrim overlay */
-  height: 520px;
+  /* Sized from the VIEWPORT, not a fixed 520px. A run graph on a laptop and the same
+     graph on an external display are the same picture at two very different useful
+     sizes, and the canvas is the thing that decides which. Clamped so it can neither
+     collapse on a short window nor push the rest of the run view off-screen on a tall
+     one; reactflow re-fits on every resize (see MoteDag's viewport subscription). */
+  height: clamp(360px, 58vh, 760px);
   margin-top: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -565,6 +570,22 @@ button:disabled {
 }
 .dag-node__id {
   color: var(--fg-muted);
+}
+/* An agent turn names itself. `Turn N` stands where a Mote hash used to, so it reads
+   as the node's PRIMARY text rather than as muted metadata. */
+.dag-node__turn {
+  font-weight: 600;
+  color: var(--fg);
+}
+/* The turn's branch — the fired `tool_id@version`, or answered / rejected /
+   dead-lettered. One clipped line; the full detail is in the drawer. */
+.dag-node__branch {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 .dag-node__row {
   display: flex;
@@ -1874,7 +1895,8 @@ select {
   align-self: stretch;
 }
 .screen.chat .dag-canvas {
-  height: 340px;
+  /* The chat's inline trace is a glance, not a workspace — smaller band, same rule. */
+  height: clamp(260px, 34vh, 420px);
 }
 /* New-Chat header: editable name (left) + clean History/New-chat buttons (right). */
 .screen__head.chat__head {
