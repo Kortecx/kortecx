@@ -93,9 +93,9 @@ pub struct ConnectionsArgs {
 /// Parse one `--env NAME=CREDENTIAL_REF` entry.
 ///
 /// The right-hand side is the NAME of a stored secret, never the secret. That distinction
-/// is the whole storage-at-rest posture, and `--env TOKEN=sk-live-abc123` is the natural
-/// mistake — it looks like every other tool's `--env`, and accepting it would write a
-/// credential into `connections.db` and out through every list surface. So a ref is held to
+/// is the whole storage-at-rest posture, and passing the VALUE is the natural mistake — it
+/// looks like every other tool's `--env`, and accepting it would write a credential into
+/// `connections.db` and out through every list surface. So a ref is held to
 /// what a NAME can be: printable, unspaced, and drawn from the characters secret stores use.
 /// Anything else is refused with the rule stated, not silently stored.
 fn parse_env_entry(raw: &str) -> Result<(String, String), CliError> {
@@ -650,6 +650,8 @@ mod tests {
     #[test]
     fn env_refusals_name_the_by_reference_rule() {
         // A value, not a ref name. The refusal has to teach the rule, not just decline.
+        // The sample is deliberately not shaped like a real provider token — a fixture
+        // carrying a live prefix trains a secret scanner's readers to dismiss it.
         let err = p(&[
             "add",
             "--name",
@@ -657,7 +659,7 @@ mod tests {
             "--command",
             "x",
             "--env",
-            "TOKEN=sk-live-abc/=+ secret",
+            "TOKEN=raw/=+ value with spaces",
         ])
         .expect_err("a value-shaped argument is refused");
         let msg = format!("{err}");
