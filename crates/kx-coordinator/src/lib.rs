@@ -68,7 +68,9 @@ pub use error::CoordinatorError;
 // so the gateway can project them read-only via GetServerInfo (the Settings card).
 pub use kx_journal::RepudiationReason;
 pub use nonce::{OsRandomNonce, RunNonceSource};
-pub use react_shape::{REACT_DEFAULT_MAX_TOOL_CALLS, REACT_MAX_TOOL_CALLS, REACT_MAX_TURNS};
+pub use react_shape::{
+    REACT_DEFAULT_MAX_TOOL_CALLS, REACT_DEFAULT_MAX_TURNS, REACT_MAX_TOOL_CALLS, REACT_MAX_TURNS,
+};
 pub use registry::{
     is_live, InMemoryWorkerRegistry, RegistryError, WorkerRecord, WorkerRegistry, WorkerStatus,
     DEFAULT_LIVENESS_TIMEOUT,

@@ -71,7 +71,7 @@ pub use backend::{BatchItem, EmbeddingBackend, InferenceBackend, TokenSink};
 pub use content::ContentFetcher;
 pub use dispatcher::{DispatchOutcome, Dispatcher, DispatcherConfig};
 #[cfg(feature = "llamacpp")]
-pub use llama::LlamaInferenceBackend;
+pub use llama::{LlamaInferenceBackend, DEFAULT_N_CTX};
 #[cfg(feature = "llamacpp")]
 pub use types::ModelDialects;
 pub use types::{

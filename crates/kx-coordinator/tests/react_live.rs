@@ -23,7 +23,20 @@ use std::sync::Arc;
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_coordinator::proto::coordinator_server::Coordinator;
 use kx_coordinator::proto::{CommitOutcome, ExecutorClass as ProtoExecutorClass};
-use kx_coordinator::{CoordinatorService, InMemoryWorkerRegistry, MoteState, WorkerRegistry};
+use kx_coordinator::{
+    CoordinatorService, InMemoryWorkerRegistry, MoteState, WorkerRegistry,
+    REACT_DEFAULT_MAX_TOOL_CALLS, REACT_DEFAULT_MAX_TURNS, REACT_MAX_TURNS,
+};
+
+/// How many lease/commit iterations a budget-exhaustion test pumps: each round is a
+/// TURN plus its OBSERVATION, so twice the turn budget, plus slack for the settle pass.
+///
+/// ⚠ DERIVED, not a literal. These loops were `0..24`, which was ample while the turn
+/// default was 8 and became the BINDING CONSTRAINT the moment it moved to 16: the pump
+/// stopped at 12 turns and the assertion `turns_leased == max_turns` was then a claim
+/// about a number the PUMP had chosen, not the budget. A harness bound that can undercut
+/// the thing under test has to move with it.
+const PUMP_ROUNDS: usize = (REACT_DEFAULT_MAX_TURNS as usize) * 2 + 8;
 use kx_journal::{Journal, JournalEntry, ReactBranch, SqliteJournal};
 use kx_mote::{
     ConfigKey, ConfigVal, EdgeMeta, EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId,
@@ -431,7 +444,10 @@ async fn react_seed_swaps_in_a_salted_turn0_and_anchors() {
             assert_eq!(*branch, ReactBranch::Pending);
             // T-MULTI-ELEMENT-TOOLCALLS: the default tool-call cap rose 6 → 20 and
             // decoupled from max_turns (a turn can now fire N tools).
-            assert_eq!((*max_turns, *max_tool_calls), (8, 20));
+            assert_eq!(
+                (*max_turns, *max_tool_calls),
+                (REACT_DEFAULT_MAX_TURNS, REACT_DEFAULT_MAX_TOOL_CALLS)
+            );
         }
         other => panic!("expected a ReactRound anchor, got {other:?}"),
     }
@@ -1667,7 +1683,7 @@ async fn chain_is_bounded_by_the_durable_budget() {
 
     let mut turns_leased = 0u32;
     let mut observations_committed = 0u32;
-    for _ in 0..24 {
+    for _ in 0..PUMP_ROUNDS {
         let leased = common::lease_work(&svc, worker, MAC, 16).await;
         let Some(item) = leased.into_iter().next() else {
             break;
@@ -1698,26 +1714,31 @@ async fn chain_is_bounded_by_the_durable_budget() {
     // 7 commits the gate fires (turns_used = 8 >= max_turns 8) and no turn 8 spawns —
     // but the final observation DID fire (harness parity). The tool-call cap (20) is
     // not reached: one tool/turn binds on max_turns first (the decoupled-cap behavior).
-    assert_eq!(turns_leased, 8, "exactly max_turns turns, then quiesce");
     assert_eq!(
-        observations_committed, 8,
+        turns_leased, REACT_DEFAULT_MAX_TURNS,
+        "exactly max_turns turns, then quiesce"
+    );
+    assert_eq!(
+        observations_committed, REACT_DEFAULT_MAX_TURNS,
         "every frozen Tool decision fired its observation, the last included"
     );
     assert!(common::lease_work(&svc, worker, MAC, 16).await.is_empty());
     // W2: the no-answer Tool tail at exhaustion freezes a LOUD terminal DeadLettered
     // (the honest terminal — never a silent quiesce). The terminal lands on the LAST
-    // tool turn (index max_turns - 1 = 7).
+    // tool turn (index max_turns - 1), derived so it tracks the budget.
+    let last_turn = REACT_DEFAULT_MAX_TURNS - 1;
     let facts = react_facts(&svc, &dir).await;
     assert!(
         facts.iter().any(|f| matches!(
             f,
             JournalEntry::ReactRound {
-                turn: 7,
+                turn,
                 branch: ReactBranch::DeadLettered,
                 ..
-            }
+            } if *turn == last_turn
         )),
-        "a budget-exhausted Tool tail dead-letters honestly (W2) — no silent quiesce"
+        "a budget-exhausted Tool tail dead-letters honestly (W2) on turn {last_turn} — \
+         no silent quiesce, and on the LAST turn specifically"
     );
     // Every recorded fact carries the durable caps the run was admitted under.
     for fact in facts {
@@ -1727,7 +1748,10 @@ async fn chain_is_bounded_by_the_durable_budget() {
             ..
         } = fact
         {
-            assert_eq!((max_turns, max_tool_calls), (8, 20));
+            assert_eq!(
+                (max_turns, max_tool_calls),
+                (REACT_DEFAULT_MAX_TURNS, REACT_DEFAULT_MAX_TOOL_CALLS)
+            );
         }
     }
 }
@@ -1749,7 +1773,7 @@ async fn identical_repeat_call_is_deduped() {
 
     // Every turn proposes the IDENTICAL call. Turn 0 fires; turn 1+ are deduped.
     let mut fired_observations = 0u32;
-    for _ in 0..24 {
+    for _ in 0..PUMP_ROUNDS {
         let leased = common::lease_work(&svc, worker, MAC, 16).await;
         let Some(item) = leased.into_iter().next() else {
             break;
@@ -1851,7 +1875,7 @@ async fn last_useful_turn_is_settle_nudged() {
     let worker = common::register(&svc, "w").await;
 
     let mut turn_prompts: Vec<String> = Vec::new();
-    for _ in 0..24 {
+    for _ in 0..PUMP_ROUNDS {
         let leased = common::lease_work(&svc, worker, MAC, 16).await;
         let Some(item) = leased.into_iter().next() else {
             break;
@@ -1871,7 +1895,11 @@ async fn last_useful_turn_is_settle_nudged() {
 
     // 8 turns (max_turns, the binding cap for a single-tool chain), and EXACTLY the
     // last one (turn index 7) is nudged (T-MULTI-ELEMENT-TOOLCALLS decoupled caps).
-    assert_eq!(turn_prompts.len(), 8, "exactly max_turns turns");
+    assert_eq!(
+        turn_prompts.len(),
+        REACT_DEFAULT_MAX_TURNS as usize,
+        "exactly max_turns turns"
+    );
     let nudged: Vec<usize> = turn_prompts
         .iter()
         .enumerate()
@@ -1880,11 +1908,11 @@ async fn last_useful_turn_is_settle_nudged() {
         .collect();
     assert_eq!(
         nudged,
-        vec![7],
+        vec![REACT_DEFAULT_MAX_TURNS as usize - 1],
         "exactly one nudged turn, on the last useful round (index max_turns-1)"
     );
     assert!(
-        turn_prompts[7].contains("give your FINAL answer"),
+        turn_prompts[REACT_DEFAULT_MAX_TURNS as usize - 1].contains("give your FINAL answer"),
         "the nudged turn carries the answer-now steer"
     );
     // Bounded + honest terminal (the model never answered ⇒ DeadLettered, W2).
@@ -1915,7 +1943,7 @@ async fn settle_nudge_lets_a_looping_model_answer() {
 
     let mut answered_on_nudge = false;
     let mut turn_n = 0u32;
-    for _ in 0..24 {
+    for _ in 0..PUMP_ROUNDS {
         let leased = common::lease_work(&svc, worker, MAC, 16).await;
         let Some(item) = leased.into_iter().next() else {
             break;
@@ -2758,7 +2786,7 @@ async fn repeated_bad_args_exhaust_the_budget_then_dead_letter() {
     let worker = common::register(&svc, "w").await;
 
     let mut rejected_turns = 0u32;
-    for _ in 0..24 {
+    for _ in 0..PUMP_ROUNDS {
         let leased = common::lease_work(&svc, worker, MAC, 16).await;
         let Some(item) = leased.into_iter().next() else {
             break;
@@ -2794,10 +2822,13 @@ async fn repeated_bad_args_exhaust_the_budget_then_dead_letter() {
     // one turn AND one tool call, and with the decoupled caps max_turns (8) is now
     // smaller than max_tool_calls (20), so the turn cap fires first.
     assert_eq!(
-        rejected, 8,
+        rejected, REACT_DEFAULT_MAX_TURNS as usize,
         "exactly max_turns Rejected rounds, then bounded"
     );
-    assert_eq!(rejected_turns, 8, "no turn 8 ever spawned");
+    assert_eq!(
+        rejected_turns, REACT_DEFAULT_MAX_TURNS,
+        "no turn past the budget ever spawned"
+    );
     assert!(
         matches!(
             facts.last().unwrap(),
@@ -2888,11 +2919,14 @@ async fn seed_caps_are_anchored_and_validated() {
         .expect_err("a max_tool_calls above the hard ceiling (20) is refused");
     assert_eq!(err.code(), tonic::Code::FailedPrecondition);
 
-    // A turn cap above its hard ceiling (8) is refused.
+    // A turn cap above its hard ceiling is refused. ⚠ Derived from the constant, not
+    // spelled `9`: 9 WAS above the ceiling while the ceiling was 8, and W4 made it an
+    // ordinary request — a literal here would have turned a refusal test into a test
+    // that the runtime refuses something it is now supposed to accept.
     let mut over = seed_mote();
     over.def.config_subset.insert(
         ConfigKey(kx_mote::REACT_MAX_TURNS_KEY.to_string()),
-        ConfigVal(b"9".to_vec()),
+        ConfigVal((REACT_MAX_TURNS + 1).to_string().into_bytes()),
     );
     let err = svc
         .submit_mote(Request::new(kx_coordinator::proto::SubmitMoteRequest {
@@ -2902,8 +2936,26 @@ async fn seed_caps_are_anchored_and_validated() {
             react_seed: true,
         }))
         .await
-        .expect_err("a max_turns above the hard ceiling (8) is refused");
+        .expect_err("a max_turns above the hard ceiling is refused");
     assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+
+    // …and the CONTROL the old test never had: a cap between the default and the
+    // ceiling is ACCEPTED. Without it, the refusal above passes just as well against a
+    // runtime that refuses every explicit cap — which is indistinguishable from the
+    // pre-W4 behaviour this wave exists to change.
+    let mut longer = seed_mote();
+    longer.def.config_subset.insert(
+        ConfigKey(kx_mote::REACT_MAX_TURNS_KEY.to_string()),
+        ConfigVal((REACT_DEFAULT_MAX_TURNS + 1).to_string().into_bytes()),
+    );
+    svc.submit_mote(Request::new(kx_coordinator::proto::SubmitMoteRequest {
+        mote: Some(longer.into()),
+        warrant: Some(warrant(true).into()),
+        accept_at_least_once: false,
+        react_seed: true,
+    }))
+    .await
+    .expect("a horizon longer than the DEFAULT but within the ceiling is admissible");
 }
 
 /// The `instruction` free-param key (the `kx/recipes/react` slot name) seeds

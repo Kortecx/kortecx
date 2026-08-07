@@ -45,12 +45,14 @@ class ServerInfo:
     feature_console: bool  # compiled with the embedded `console`
     feature_vision: bool  # compiled with the `vision` (mmproj) leg
     audit_log_enabled: bool  # the serve-path JSONL audit log is on
-    # T-MULTI-ELEMENT-TOOLCALLS: the server's DEFAULT agentic budget (also the hard
-    # ceilings) — a turn may fire several tools, so the two caps are independent. A run
-    # overrides them per-invocation via ``run_agent(max_tool_calls=...)`` / ``kx agent
-    # run --max-tool-calls``.
+    # The server's DEFAULT agentic budget — a turn may fire several tools, so the two
+    # caps are independent. A run overrides them per-invocation via
+    # ``run_agent(max_tool_calls=...)`` / ``kx agent run --max-tool-calls``.
+    # W4: ``react_max_turns`` is NO LONGER also the ceiling; ``react_turn_ceiling`` is the
+    # largest ``max_turns`` a run may ASK for (0 from a server predating W4).
     react_max_turns: int = 0
     react_max_tool_calls: int = 0
+    react_turn_ceiling: int = 0
     # PR-B: the configured datasets/RAG embed model id ("" on a model-less serve).
     embed_model_id: str = ""
     # RC4a: the configured embedder is a decoder LLM (weak sentence embeddings) — the
@@ -95,6 +97,7 @@ class ServerInfo:
             audit_log_enabled=r.audit_log_enabled,
             react_max_turns=r.react_max_turns,
             react_max_tool_calls=r.react_max_tool_calls,
+            react_turn_ceiling=r.react_turn_ceiling,
             embed_model_id=r.embed_model_id,
             embed_model_is_decoder=r.embed_model_is_decoder,
             active_model_id=r.active_model_id,

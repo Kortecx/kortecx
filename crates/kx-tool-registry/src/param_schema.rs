@@ -252,10 +252,28 @@ pub fn validate_args(schema: &InputSchema, args_bytes: &[u8]) -> Result<(), Sche
         // structurally impossible (`bench-v1`'s `http-paginated-roster` refused the same
         // proposal five turns running, then gave up and said so).
         //
-        // Folding it into the `None` arm keeps the two spellings of absence AGREEING, which
+        // Folding it into the `None` arm keeps the spellings of absence AGREEING, which
         // is the property that matters: whichever one the model picks, it gets the same
         // answer — either "fine, it's optional" or "you did not supply a required one".
-        let supplied = map.get(&spec.name).filter(|raw| raw.get().trim() != "null");
+        //
+        // W4: `""` IS THE THIRD SPELLING OF ABSENCE, and it was the one that got through.
+        // `ParamType::Str` carries only `max_len`, so `{"query": ""}` was grammar-legal AND
+        // validator-legal; it reached `embed("")` and soft-failed to an EMPTY OBSERVATION.
+        // The model then answered from nothing, having been told nothing was wrong — the
+        // silent-failure shape, one layer up from the context-overflow defect this wave also
+        // closes. A required parameter supplied as an empty string has not been supplied,
+        // and saying so is what lets the model correct itself on the next turn.
+        //
+        // ⚠ Deliberately NOT a new `min_len` on `ParamType::Str`. That would change a
+        // public serde enum, touch 51 construction sites, and — the real objection — put
+        // the rule somewhere each of those 51 sites has to remember to opt into. Absence
+        // is absence for every declared string, and this is where the other two spellings
+        // are already decided. It also cannot narrow the GRAMMAR below the validator,
+        // because the grammar never sees it: `value_fragment` matches `Str { .. }`.
+        let supplied = map.get(&spec.name).filter(|raw| {
+            let t = raw.get().trim();
+            t != "null" && t != "\"\""
+        });
         match supplied {
             None => {
                 if spec.required {
@@ -827,6 +845,72 @@ mod tests {
         // Narrow-scope: an unquoted VALUE (not a string) stays fail-closed
         // (genuinely ambiguous — `five` could be a typo'd keyword, not a string).
         assert!(validate_args(&schema(), br"{count: five}").is_err());
+    }
+
+    /// ⚠ W4 — an EMPTY STRING on a REQUIRED parameter is absence, and is refused.
+    ///
+    /// This is `memory_quality`'s defect in miniature. `{"query": ""}` was legal at
+    /// every layer — the grammar emits `jstring`, the validator checked only
+    /// `max_len` — so it reached `embed("")` and soft-failed to an empty observation.
+    /// The model was handed nothing and told nothing was wrong.
+    ///
+    /// Asserted as `MissingRequired`, the SAME error the other two spellings of
+    /// absence produce, because a model that gets three different answers for three
+    /// ways of saying "I have no value" cannot learn the rule.
+    #[test]
+    fn an_empty_string_on_a_required_param_is_absence_not_a_value() {
+        let s = InputSchema {
+            params: vec![ParamSpec {
+                name: "query".into(),
+                ty: ParamType::Str { max_len: 4096 },
+                required: true,
+            }],
+            deny_unknown: true,
+        };
+        assert!(
+            matches!(
+                validate_args(&s, br#"{"query": ""}"#),
+                Err(SchemaError::MissingRequired { ref name }) if name == "query"
+            ),
+            "an empty required string must be refused as ABSENT, with the same error \
+             as `null` and as omission"
+        );
+        // The three spellings AGREE — the property the null-folding comment names.
+        assert!(matches!(
+            validate_args(&s, br#"{"query": null}"#),
+            Err(SchemaError::MissingRequired { .. })
+        ));
+        assert!(matches!(
+            validate_args(&s, br"{}"),
+            Err(SchemaError::MissingRequired { .. })
+        ));
+        // ⚠ THE CONTROL: a NON-empty value still passes. Without it this test would
+        // pass just as well against a validator that had started refusing every
+        // string, which is a far worse defect than the one being fixed.
+        assert!(validate_args(&s, br#"{"query": "who is on call"}"#).is_ok());
+        // Whitespace is a VALUE, not absence: only the exact empty string folds. A
+        // model that sends " " has supplied something, and guessing otherwise would
+        // put the validator in the business of trimming user data.
+        assert!(validate_args(&s, br#"{"query": " "}"#).is_ok());
+    }
+
+    /// The same fold on an OPTIONAL parameter means "not supplied" — it must NOT
+    /// become an error. An optional param is exactly where `""` is a reasonable way
+    /// to say "no value", and refusing it would break the pagination shape the
+    /// `null` fold exists to protect.
+    #[test]
+    fn an_empty_string_on_an_optional_param_is_simply_absent() {
+        let s = InputSchema {
+            params: vec![ParamSpec {
+                name: "cursor".into(),
+                ty: ParamType::Str { max_len: 64 },
+                required: false,
+            }],
+            deny_unknown: true,
+        };
+        assert!(validate_args(&s, br#"{"cursor": ""}"#).is_ok());
+        assert!(validate_args(&s, br#"{"cursor": null}"#).is_ok());
+        assert!(validate_args(&s, br#"{"cursor": "abc"}"#).is_ok());
     }
 
     proptest::proptest! {

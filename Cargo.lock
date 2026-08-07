@@ -1948,7 +1948,7 @@ dependencies = [
 
 [[package]]
 name = "kx-llamacpp"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "kx-grammar",
  "kx-llamacpp-sys",
@@ -2230,7 +2230,7 @@ dependencies = [
 
 [[package]]
 name = "kx-proto"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "bincode 2.0.1",
  "kx-content",

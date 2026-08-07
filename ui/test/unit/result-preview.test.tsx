@@ -16,6 +16,31 @@ describe("oneLine", () => {
   it("leaves a short string untouched (no ellipsis)", () => {
     expect(oneLine("short", 80)).toBe("short");
   });
+
+  // ⚠ The DAG node showed `{ "echoed": { "text": "alpha…` — a cut mid-token, which a
+  // reader cannot distinguish from a truncated VALUE. The clip now lands on a word
+  // boundary when one is near the budget.
+  it("clips on a word boundary rather than mid-token", () => {
+    const s = "the quick brown fox jumps over the lazy dog";
+    const out = oneLine(s, 20);
+    expect(out).toBe("the quick brown fox…");
+    expect(out.length).toBeLessThanOrEqual(21); // never longer than the budget + the ellipsis
+  });
+
+  // …but a single unbroken token has no boundary to find, and a hard clip is then the
+  // honest answer. Without this the rule above could be satisfied by returning "" and
+  // calling it a boundary.
+  it("hard-clips an unbroken token rather than returning almost nothing", () => {
+    expect(oneLine("abcdefghij", 4)).toBe("abcd…");
+    expect(oneLine(`x${"y".repeat(60)}`, 10)).toBe("xyyyyyyyyy…");
+  });
+
+  // A boundary too early in the budget is worse than a clean cut: it would throw away
+  // most of the preview to avoid splitting one word.
+  it("ignores a word boundary that would discard most of the budget", () => {
+    // The only space is at index 2, well under 75% of a 20-char budget.
+    expect(oneLine(`ab ${"c".repeat(40)}`, 20)).toBe("ab ccccccccccccccccc…");
+  });
 });
 
 describe("ResultPreview", () => {

@@ -33,15 +33,32 @@ use kx_mote::{
 };
 use smallvec::SmallVec;
 
-/// The default per-run ReAct turn budget recorded on the turn-0 anchor, and the
-/// HARD CEILING both caps are validated against at seed time (a seed-supplied
-/// cap above it is refused LOUDLY — `ReactSeedRefused`). 8 is the harness
-/// `ReactBudget::default()` turn count, so default-cap serve chains and harness
-/// chains are identical-length (the cross-impl equivalence pin, R49). Caps are
-/// recorded DURABLY at anchor time so a recovered coordinator enforces the
-/// budget the run was admitted under, never a default that drifted across
-/// binary versions (red-team BLOCKER #4).
-pub const REACT_MAX_TURNS: u32 = 8;
+/// The HARD CEILING on a chain's model-turn budget: a seed-supplied cap above it is
+/// refused LOUDLY (`ReactSeedRefused`). Caps are recorded DURABLY at anchor time so a
+/// recovered coordinator enforces the budget the run was admitted under, never a
+/// default that drifted across binary versions (red-team BLOCKER #4).
+///
+/// **W4: 8 → 32, and the ceiling is no longer the default.** It used to be both, which
+/// meant a task needing a ninth turn was not merely over budget — it was
+/// *inexpressible*, because the only cap a seed could name was one it could not exceed.
+/// A longer horizon is the capability; [`REACT_DEFAULT_MAX_TURNS`] is what a run gets
+/// when it asks for nothing.
+pub const REACT_MAX_TURNS: u32 = 32;
+/// The DEFAULT per-run ReAct turn budget recorded on the turn-0 anchor when a seed
+/// names none.
+///
+/// **W4: 8 → 16, and this deliberately MOVES the R49 cross-implementation pin.** The
+/// equivalence that matters is that a default-cap serve chain and a default-cap harness
+/// chain are the same length, so a cold re-fold of a harness-written journal on the
+/// live binary does not diverge. That holds because
+/// `kx_model_harness::ReactBudget::default().max_turns` moves to 16 in the same commit
+/// — the pin is re-priced, not abandoned, and `react_budget_default_matches_the_harness`
+/// below fails if the two ever disagree again.
+///
+/// ⚠ The pin binds the TURN default ONLY. `max_tool_calls` has already diverged —
+/// the harness default is 8, [`REACT_DEFAULT_MAX_TOOL_CALLS`] is 20 — so do not read
+/// "the harness and the coordinator agree on budgets" into it.
+pub const REACT_DEFAULT_MAX_TURNS: u32 = 16;
 /// The HARD CEILING on a chain's total tool-call (observation) budget
 /// (T-MULTI-ELEMENT-TOOLCALLS). A seed cap above it is refused LOUDLY. DECOUPLED
 /// from `REACT_MAX_TURNS`: a single model turn can now fire N tools at once (a
@@ -53,10 +70,44 @@ pub const REACT_MAX_TOOL_CALLS: u32 = 20;
 /// The DEFAULT per-run tool-call (observation) budget (PR-2d-2; raised 6 → 20 at
 /// T-MULTI-ELEMENT-TOOLCALLS for parallel tool calling, user-directed). Now equal to
 /// the ceiling: with batched calls a chain may legitimately fire many tools across
-/// its model turns. Server-configurable via `GatewayConfig.react_max_tool_calls` /
-/// `KX_SERVE_REACT_MAX_TOOL_CALLS` (surfaced read-only in Settings); chains anchored
-/// under an older default keep their recorded caps (durable per-anchor).
+/// its model turns. Chains anchored under an older default keep their recorded caps
+/// (durable per-anchor).
+///
+/// ⚠ W4 CORRECTION: this used to claim it was "server-configurable via
+/// `GatewayConfig.react_max_tool_calls` / `KX_SERVE_REACT_MAX_TOOL_CALLS` (surfaced
+/// read-only in Settings)". **Neither exists.** `KX_SERVE_REACT_MAX_TOOL_CALLS`
+/// appeared exactly once in the tree — in that sentence. There is no
+/// `GatewayConfig.react_max_tool_calls` either; `react_max_tool_calls` is a READ-ONLY
+/// `ServerInfo` field fed straight from this constant. Both react caps are hardcoded.
 pub const REACT_DEFAULT_MAX_TOOL_CALLS: u32 = 20;
+
+/// ⚠ W4 — THE R49 TURN-BUDGET PIN, coordinator half, enforced by the COMPILER.
+///
+/// The literal `16` is spelled here and INDEPENDENTLY in
+/// `kx_model_harness::react::ReactBudget::default()`. Deliberately a literal on both
+/// sides rather than an equality between them: this crate sits BELOW the dep wall and
+/// must not depend on the harness, so there is no shared symbol to compare — the same
+/// convention `SALTED_TURN0_GOLDEN` uses, for the same reason. Move one side alone and
+/// the harness half fails.
+///
+/// What breaks if they disagree: a default-cap harness chain and a default-cap serve
+/// chain run different numbers of turns, so a cold re-fold of a harness-written journal
+/// on the live binary diverges from the durable facts.
+///
+/// A `const` block rather than a test: these are constants, so a test asserting them
+/// could never fail at runtime (clippy rejects it as a constant assertion), and a build
+/// error is a stronger guarantee than one more green line in a summary.
+const _: () = {
+    assert!(REACT_DEFAULT_MAX_TURNS == 16);
+    assert!(REACT_MAX_TURNS == 32);
+    // The default is a DEFAULT again, not the ceiling. That separation IS the W4
+    // capability: without it a seed cannot ask for a longer horizon at all.
+    assert!(REACT_DEFAULT_MAX_TURNS < REACT_MAX_TURNS);
+    // ⚠ The pin covers TURNS ONLY. The harness tool-call default is 8 and this one is
+    // 20; asserting them equal would be false. Pinned as an inequality so nobody
+    // "restores symmetry" into a claim that was never true.
+    assert!(REACT_DEFAULT_MAX_TOOL_CALLS != 8);
+};
 
 /// Truncate a refusal reason to [`kx_journal::MAX_REJECTED_REASON_LEN`] chars at a
 /// char boundary (deterministic, panic-free, total) before it freezes onto a

@@ -142,3 +142,10 @@ crates/kx-runtime/tests/fixtures/state-dirs/**/*.db-journal
 # top-level `node_modules/` whose vitest cache was tracked, and committed.
 node_modules/
 .vite/
+
+# Playwright run output, at ANY depth. `ui/.gitignore` covered `test-results/` relative
+# to `ui/`, so a suite invoked from the repository ROOT wrote a top-level
+# `test-results/.last-run.json` that nothing ignored — and it was committed. Same shape
+# as the `node_modules/` entry above: a per-package ignore is scoped to that package,
+# and the runner is not obliged to run from there.
+test-results/

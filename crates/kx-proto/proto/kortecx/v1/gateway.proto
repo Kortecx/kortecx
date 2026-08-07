@@ -2583,11 +2583,14 @@ message GetServerInfoResponse {
   bool   feature_console   = 17;  // embedded console available
   bool   feature_vision    = 18;  // the serve model is image-capable
   bool   audit_log_enabled = 19;  // a JSONL operator audit log is configured
-  // T-MULTI-ELEMENT-TOOLCALLS (additive): the server's DEFAULT agentic budget (also the
-  // hard ceilings). A turn may fire several tools at once, so the two caps are
-  // independent. Read-only display; a run overrides them per-invocation. Additive
-  // (D120.6): an old client ignores them; a new client reads 0 from an old server.
-  uint32 react_max_turns      = 20;  // default/ceiling model-turn budget (8)
+  // T-MULTI-ELEMENT-TOOLCALLS (additive): the server's DEFAULT agentic budget. A turn
+  // may fire several tools at once, so the two caps are independent. Read-only display;
+  // a run overrides them per-invocation. Additive (D120.6): an old client ignores them;
+  // a new client reads 0 from an old server.
+  // W4: these are the DEFAULTS. They used to be the ceilings as well — for turns that
+  // is no longer true (see react_turn_ceiling), which is exactly what made a longer
+  // horizon inexpressible.
+  uint32 react_max_turns      = 20;  // DEFAULT model-turn budget (16)
   uint32 react_max_tool_calls = 21;  // default/ceiling total tool-call budget (20)
   // PR-B (additive): the configured dataset embed model id (KX_SERVE_EMBED_MODEL else
   // the primary). "" on a model-less serve or an old server. Display/Settings only.
@@ -2611,6 +2614,14 @@ message GetServerInfoResponse {
   // swarms get real concurrent inference). Display/Settings + Monitoring only; an old
   // server sends 0 ⇒ the client renders "1 (default)". Never identity/digest.
   uint64 worker_pool = 26;
+  // W4 (additive): the HARD CEILING on a run's model-turn budget — the largest
+  // max_turns a run may ASK for, as opposed to react_max_turns, which is what it gets
+  // by default. Separate because they used to be one constant, which meant a task
+  // needing a longer horizon could not request one. A seed above this is refused
+  // loudly (ReactSeedRefused). Display/Settings only; never identity/digest. An old
+  // server sends 0 ⇒ the client should fall back to showing the default alone rather
+  // than rendering a ceiling of zero.
+  uint32 react_turn_ceiling = 27;
 }
 
 // ===========================================================================

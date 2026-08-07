@@ -1714,7 +1714,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             audit_log_enabled: cfg.audit_log.is_some(),
             // T-MULTI-ELEMENT-TOOLCALLS: the resolved server agentic-budget defaults
             // (also the hard ceilings) — a run overrides them per-invocation.
-            react_max_turns: kx_coordinator::REACT_MAX_TURNS,
+            // W4: the DEFAULT, not the ceiling — these were the same constant, and
+            // reporting the ceiling as "the budget" is what made the horizon look fixed.
+            react_max_turns: kx_coordinator::REACT_DEFAULT_MAX_TURNS,
+            react_turn_ceiling: kx_coordinator::REACT_MAX_TURNS,
             react_max_tool_calls: kx_coordinator::REACT_DEFAULT_MAX_TOOL_CALLS,
             // Model Control v2: the model-download posture (operator opt-in, OFF by
             // default; never possible on a non-serve-engine build). Read once here so

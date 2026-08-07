@@ -3080,7 +3080,7 @@ class GetServerInfoRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class GetServerInfoResponse(_message.Message):
-    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled", "react_max_turns", "react_max_tool_calls", "embed_model_id", "active_model_id", "allow_model_pull", "embed_model_is_decoder", "worker_pool")
+    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled", "react_max_turns", "react_max_tool_calls", "embed_model_id", "active_model_id", "allow_model_pull", "embed_model_is_decoder", "worker_pool", "react_turn_ceiling")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     MODEL_PATH_FIELD_NUMBER: _ClassVar[int]
     LISTEN_ADDR_FIELD_NUMBER: _ClassVar[int]
@@ -3107,6 +3107,7 @@ class GetServerInfoResponse(_message.Message):
     ALLOW_MODEL_PULL_FIELD_NUMBER: _ClassVar[int]
     EMBED_MODEL_IS_DECODER_FIELD_NUMBER: _ClassVar[int]
     WORKER_POOL_FIELD_NUMBER: _ClassVar[int]
+    REACT_TURN_CEILING_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     model_path: str
     listen_addr: str
@@ -3133,7 +3134,8 @@ class GetServerInfoResponse(_message.Message):
     allow_model_pull: bool
     embed_model_is_decoder: bool
     worker_pool: int
-    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ..., react_max_turns: _Optional[int] = ..., react_max_tool_calls: _Optional[int] = ..., embed_model_id: _Optional[str] = ..., active_model_id: _Optional[str] = ..., allow_model_pull: bool = ..., embed_model_is_decoder: bool = ..., worker_pool: _Optional[int] = ...) -> None: ...
+    react_turn_ceiling: int
+    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ..., react_max_turns: _Optional[int] = ..., react_max_tool_calls: _Optional[int] = ..., embed_model_id: _Optional[str] = ..., active_model_id: _Optional[str] = ..., allow_model_pull: bool = ..., embed_model_is_decoder: bool = ..., worker_pool: _Optional[int] = ..., react_turn_ceiling: _Optional[int] = ...) -> None: ...
 
 class PutSecretRequest(_message.Message):
     __slots__ = ("name", "value")

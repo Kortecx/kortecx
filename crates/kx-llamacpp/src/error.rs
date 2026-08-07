@@ -41,6 +41,29 @@ pub enum LlamaError {
     #[error("llama_decode returned non-zero status {0}")]
     DecodeFailed(i32),
 
+    /// The sequence reached the context window and generation cannot continue.
+    ///
+    /// **Why this is an error and not an end-of-stream.** `Generator` yields
+    /// `Result<Token, _>` and signals a normal finish with `None` — which is
+    /// also what an end-of-generation token produces. Returning `None` here too
+    /// made a TRUNCATED generation byte-indistinguishable from a COMPLETE one:
+    /// the caller received a short output with no indication that the model had
+    /// been cut off mid-token rather than choosing to stop. The observable
+    /// symptom was a model that "will not emit a complete tool call" — the call
+    /// was being emitted and then silently clipped. A window that fills up is a
+    /// condition the operator can act on (serve a larger window, shorten the
+    /// prompt), so it is reported rather than absorbed.
+    #[error(
+        "context window exhausted after {pos} tokens (n_ctx = {n_ctx}); \
+         generation was truncated, not completed"
+    )]
+    ContextExhausted {
+        /// The context window the sequence ran out of.
+        n_ctx: u32,
+        /// The position generation stopped at (== `n_ctx` at the boundary).
+        pos: u32,
+    },
+
     /// `llama_encode` returned a non-zero status (encoder-decoder models only).
     ///
     /// **Reachability:** the test fixture (`stories260K.gguf`) is a

@@ -109,6 +109,34 @@ const MAX_CHAT_RAG_K: usize = 256;
 /// Defensive upper bound for the App project rail (an operator opt-in for a bigger rail).
 const MAX_APP_PROJECT_RAIL_BYTES: usize = 512 * 1024; // 512 KiB
 
+/// W4 — the DEFAULT served-context ceiling, held at the pre-W4 hard-clamp value on
+/// purpose so an unset environment is byte-identical to before. See
+/// [`serve_n_ctx_ceiling`] for why the default must not move.
+///
+/// The three window constants and their resolver carry `serve-engine` because their
+/// only consumer, `model_exec`, does — the pre-W4 `MAX_SERVE_N_CTX` was equally
+/// unreachable without it, just less visibly so (it sat un-gated INSIDE the gated
+/// module). Without the gate they are genuine dead code in a default build, and CI
+/// lints with `-D warnings`.
+#[cfg(feature = "serve-engine")]
+pub(crate) const DEFAULT_MAX_SERVE_N_CTX: u32 = 8_192;
+/// Minimum context the agent's tool-use loop needs — the FLOOR `KX_SERVE_N_CTX` is
+/// clamped to, and re-exported as `model_exec::AGENT_MIN_CTX_TOKENS`.
+///
+/// It lives HERE rather than beside its user because `model_exec` is `serve-engine`-gated
+/// while this resolver is not: a constant the ungated path reads cannot sit behind a
+/// feature. Mirrors `kx_model_harness::registration::AGENT_MIN_CTX_TOKENS` by hand —
+/// kx-gateway does not depend on the harness, so the harness pins that pair itself in
+/// `registration::tests::the_backend_default_window_clears_the_agent_floor`.
+#[cfg(feature = "serve-engine")]
+pub(crate) const MIN_SERVE_N_CTX: u32 = 2_048;
+/// Defensive upper bound on `KX_SERVE_N_CTX`. Not a statement that 128k is
+/// servable on any given box — the KV cache still has to fit — but the point past
+/// which a value is more likely a typo than an intent. A model declaring a larger
+/// window is served at this ceiling, and the truncation is now reported.
+#[cfg(feature = "serve-engine")]
+pub(crate) const HARD_MAX_SERVE_N_CTX: u32 = 131_072;
+
 /// Resolve a `usize` cap from a raw env string: parse, accept only `min..=max`,
 /// else fall back to `default`. Pure + total (the unit-tested core).
 fn parse_cap(raw: Option<&str>, default: usize, min: usize, max: usize) -> usize {
@@ -119,9 +147,50 @@ fn parse_cap(raw: Option<&str>, default: usize, min: usize, max: usize) -> usize
 
 /// Resolve a `u32` token cap (`min` is 1 — a zero budget would never decode).
 fn parse_cap_u32(raw: Option<&str>, default: u32, max: u32) -> u32 {
+    parse_cap_u32_min(raw, default, 1, max)
+}
+
+/// Resolve a `u32` cap with an explicit FLOOR. Split out for the served context
+/// window, whose floor is not 1 but the smallest window the agent's tool-use loop
+/// can actually work in — below it the loop is broken rather than merely small,
+/// so an under-range value falls back to the default like any other garbage.
+fn parse_cap_u32_min(raw: Option<&str>, default: u32, min: u32, max: u32) -> u32 {
     raw.and_then(|s| s.trim().parse::<u32>().ok())
-        .filter(|&v| v >= 1 && v <= max)
+        .filter(|&v| v >= min && v <= max)
         .unwrap_or(default)
+}
+
+/// W4 — the SERVED CONTEXT WINDOW ceiling (`KX_SERVE_N_CTX`).
+///
+/// The window was hard-clamped to 8192 with no override, while a Gemma-4 GGUF
+/// declares 128k. The clamp is not wrong — it bounds KV-cache memory, and OSS
+/// targets one ordinary machine — but it was not the operator's to choose, and a
+/// prompt that outgrew it was silently truncated rather than refused
+/// (`LlamaError::ContextExhausted` now reports that half).
+///
+/// ⚠ The DEFAULT IS DELIBERATELY UNCHANGED at [`DEFAULT_MAX_SERVE_N_CTX`], for the
+/// same reason [`DEFAULT_REACT_MAX_OUTPUT_TOKENS`] is still 512: **moving it moves
+/// measured model behaviour, and that owes a dual-engine baseline recapture.** Widening
+/// what a model may be handed changes what it emits; a knob that is off by default
+/// changes nothing until an operator asks, so the recapture stays with the wave that
+/// is already taking a capture window.
+///
+/// It is NOT held back by the recipe-identity hazard, and that is worth stating
+/// because it was true until recently: this value reaches the shaper warrant's
+/// `model_route`, and a changed warrant used to be different body bytes under an
+/// unchanged recipe id, which `publish_body` refused on the serve BOOT path.
+/// `kx_workflow::Manifest` now folds each step's `warrant_ref` into `ManifestId` and
+/// `seed_recipe` advances the handle with a version successor —
+/// `provision::tests::a_react_warrant_change_survives_on_an_already_seeded_state_dir`.
+/// A raised ceiling is an ordinary behaviour change now, not a boot risk.
+#[cfg(feature = "serve-engine")]
+pub(crate) fn serve_n_ctx_ceiling() -> u32 {
+    parse_cap_u32_min(
+        std::env::var("KX_SERVE_N_CTX").ok().as_deref(),
+        DEFAULT_MAX_SERVE_N_CTX,
+        MIN_SERVE_N_CTX,
+        HARD_MAX_SERVE_N_CTX,
+    )
 }
 
 /// The F-7 serve-context window cap (`KX_SERVE_WINDOW_BYTES`).

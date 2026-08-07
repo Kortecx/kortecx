@@ -7,7 +7,7 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { BatchedContentVM } from "../../kx/use-content-batch";
 import type { MoteVM } from "../../kx/use-projection";
-import { stateVisual } from "../../lib/colors";
+import { isTerminalState, stateVisual } from "../../lib/colors";
 import type { DecodedContent } from "../../lib/content-decode";
 import type { StepType } from "../../lib/step-kind";
 import { buildEdges } from "./dag-graph";
@@ -17,12 +17,17 @@ import { toRfEdge } from "./edges";
 import type { XY } from "./layout";
 
 /**
- * Concrete hex per state tone for the MiniMap. The MiniMap paints SVG `fill`
- * attributes, which (unlike CSS) do NOT resolve `var(--t-*)` — so this is the one
- * place we mirror the `--t-*` light-theme values from `app.css`. Keep in sync.
+ * Fallback hex per state tone, used ONLY where the document cannot be measured
+ * (jsdom, SSR, a detached render). These are the LIGHT-theme `--t-*` values.
+ *
+ * ⚠ They used to be the whole story, and that was one of two reasons the minimap
+ * rendered as a flat panel: a mirrored table cannot follow a theme, so every node
+ * painted a light-theme colour on a dark canvas. The live path now reads the token
+ * itself, so `app.css` is the single source and dark theme is not a second table to
+ * keep in sync.
  */
 const TONE_UNKNOWN_HEX = "#4b5563";
-const TONE_HEX: Readonly<Record<string, string>> = {
+const TONE_FALLBACK_HEX: Readonly<Record<string, string>> = {
   pending: "#475569",
   scheduled: "#b45309",
   committed: "#047857",
@@ -32,9 +37,33 @@ const TONE_HEX: Readonly<Record<string, string>> = {
   unknown: TONE_UNKNOWN_HEX,
 };
 
-/** MiniMap node fill for a Mote, keyed by its state tone (single source: `stateVisual`). */
+/** Resolved `--t-<tone>` values, keyed `<theme>:<tone>`. `getComputedStyle` is far too
+ *  expensive to call per node per frame; the theme is in the key so a toggle re-resolves
+ *  rather than serving the previous theme's colour. */
+const toneHexCache = new Map<string, string>();
+
+/**
+ * MiniMap node fill for a Mote, keyed by its state tone (single source: `stateVisual`).
+ *
+ * The MiniMap paints SVG `fill` ATTRIBUTES, which — unlike CSS — do not resolve
+ * `var(--t-*)`, so the value has to be a concrete hex. It is read from the same
+ * custom property the rest of the console styles from, rather than mirrored.
+ */
 export function miniMapColor(stateCode: number): string {
-  return TONE_HEX[stateVisual(stateCode).tone] ?? TONE_UNKNOWN_HEX;
+  const { tone } = stateVisual(stateCode);
+  const fallback = TONE_FALLBACK_HEX[tone] ?? TONE_UNKNOWN_HEX;
+  if (typeof document === "undefined") {
+    return fallback;
+  }
+  const root = document.documentElement;
+  const key = `${root.dataset.theme ?? "light"}:${tone}`;
+  const hit = toneHexCache.get(key);
+  if (hit !== undefined) {
+    return hit;
+  }
+  const resolved = getComputedStyle(root).getPropertyValue(`--t-${tone}`).trim() || fallback;
+  toneHexCache.set(key, resolved);
+  return resolved;
 }
 
 /** The data a `MoteNode` renders. The index signature satisfies reactflow's `Node<T>`. */
@@ -53,6 +82,10 @@ export interface MoteNodeData {
   /** This Mote is an agent TURN, and these are the turn's own facts — the node names
    *  the turn and its tool instead of a Mote hash. Absent for a non-agentic Mote. */
   readonly turnLabel?: AgenticTurnLabel;
+  /** This Mote is the OBSERVATION a turn produced (its only parent is that turn), and
+   *  this is the PARENT turn's label — so the node can say which turn's tool result it
+   *  is instead of showing a hash. Absent for everything that is not an observation. */
+  readonly observationOf?: AgenticTurnLabel;
   readonly [key: string]: unknown;
 }
 
@@ -80,6 +113,7 @@ export function buildFlowNodes(
 ): MoteFlowNode[] {
   return motes.map((m) => {
     const vm = m.resultRef ? results?.byRef.get(m.resultRef) : undefined;
+    const turnLabel = turnLabels?.get(m.moteId);
     return {
       id: m.moteId,
       type: "mote",
@@ -91,11 +125,27 @@ export function buildFlowNodes(
         resultLoading: m.resultRef ? (results?.loading ?? false) : false,
         swarmRole: m.moteId === gatherId ? "gather" : undefined,
         stepType: stepKinds?.get(m.moteId),
-        turnLabel: turnLabels?.get(m.moteId),
+        turnLabel,
+        // An OBSERVATION is not a turn and carries exactly one parent: the turn whose
+        // tool call it fired. Resolving that parent's label here is what lets the node
+        // say `Turn 0 · result of mcp-echo/echo@1` instead of a Mote hash. Guarded on
+        // `!turnLabel` so a turn never labels itself as its own observation.
+        observationOf: turnLabel ? undefined : observationParentLabel(m, turnLabels),
       },
       draggable: false,
     };
   });
+}
+
+/** The label of the TURN a Mote is the observation of, or `undefined` if it is not one.
+ *  An observation has exactly one parent and that parent is a turn — anything else (a
+ *  fan-in, a root, an ordinary DAG step) is deliberately left alone. */
+function observationParentLabel(
+  m: MoteVM,
+  turnLabels?: ReadonlyMap<string, AgenticTurnLabel>,
+): AgenticTurnLabel | undefined {
+  const only = turnLabels && m.parents.length === 1 ? m.parents[0] : undefined;
+  return only ? turnLabels?.get(only.parentId) : undefined;
 }
 
 /** Styled reactflow edges from the Motes' parent links (dangling dropped). PR-B:
@@ -107,7 +157,17 @@ export function buildFlowEdges(
   branchEdges?: ReadonlySet<string>,
   derived: readonly GraphEdge[] = [],
 ): Edge[] {
+  // Motion: an edge is LIVE while the work it feeds has not settled. Derived
+  // from the projection's own state codes, so the animation is a reading of the run
+  // rather than a decoration on it — a finished graph has no live edges at all, and a
+  // replayed one animates nothing.
+  const unsettled = new Set(
+    motes.filter((m) => !isTerminalState(m.stateCode)).map((m) => m.moteId),
+  );
   return [...buildEdges(motes), ...derived].map((e) =>
-    toRfEdge(e, { branch: branchEdges?.has(e.id) ?? false }),
+    toRfEdge(e, {
+      branch: branchEdges?.has(e.id) ?? false,
+      live: unsettled.has(e.target),
+    }),
   );
 }

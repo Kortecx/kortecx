@@ -3184,7 +3184,14 @@ fn react_seed_params(seed: &Mote) -> Result<(String, (u32, u32), bool), Coordina
             }),
         }
     };
-    let max_turns = cap_param(REACT_MAX_TURNS_KEY, crate::react_shape::REACT_MAX_TURNS)?;
+    // W4: the DEFAULT is no longer the ceiling. An absent cap resolves to
+    // `REACT_DEFAULT_MAX_TURNS` (16); the refusal below still bounds against
+    // `REACT_MAX_TURNS` (32), so a seed may now ASK for a longer horizon — which under
+    // the old shape was impossible, the default and the ceiling being one constant.
+    let max_turns = cap_param(
+        REACT_MAX_TURNS_KEY,
+        crate::react_shape::REACT_DEFAULT_MAX_TURNS,
+    )?;
     let max_tool_calls = cap_param(
         REACT_MAX_TOOL_CALLS_KEY,
         crate::react_shape::REACT_DEFAULT_MAX_TOOL_CALLS,
@@ -3193,15 +3200,19 @@ fn react_seed_params(seed: &Mote) -> Result<(String, (u32, u32), bool), Coordina
     // tools at once (a `ToolBatch`), so the total tool-call budget legitimately
     // exceeds the model-turn budget — the old `max_tool_calls < max_turns` coupling
     // (which assumed ≤1 tool per turn) no longer holds. Each cap is bounded by its own
-    // hard ceiling: model turns ≤ REACT_MAX_TURNS (8), total tool calls ≤
-    // REACT_MAX_TOOL_CALLS (20). A seed cap above either ceiling is refused LOUDLY.
+    // hard ceiling: model turns ≤ `REACT_MAX_TURNS`, total tool calls ≤
+    // `REACT_MAX_TOOL_CALLS`. A seed cap above either ceiling is refused LOUDLY.
     if max_turns == 0
         || max_turns > crate::react_shape::REACT_MAX_TURNS
         || max_tool_calls == 0
         || max_tool_calls > crate::react_shape::REACT_MAX_TOOL_CALLS
     {
+        // ⚠ The numbers here are LITERALS because `ReactSeedRefused` carries a
+        // `&'static str` and stable Rust cannot format one from a const. They said
+        // "<= 8" for as long as the ceiling was 8 and would have kept saying it —
+        // `the_refusal_message_states_the_real_ceilings` fails if they drift again.
         return Err(CoordinatorError::ReactSeedRefused(
-            "react budget caps must satisfy 0 < max_turns <= 8 AND \
+            "react budget caps must satisfy 0 < max_turns <= 32 AND \
              0 < max_tool_calls <= 20",
         ));
     }
@@ -7979,5 +7990,152 @@ mod context_carry_tests {
         );
         // The denied request leaves the pending inbox (latest state is not Requested).
         assert!(projection.pending_approvals().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod react_budget_tests {
+    //! W4 — the turn-horizon caps: what an absent seed resolves to, what a seed may
+    //! ASK for, and that the refusal still names the real ceiling.
+    use super::*;
+    use kx_mote::{
+        ConfigVal, GraphPosition, InferenceParams, InputDataId, LogicRef, PromptTemplateHash,
+        MOTE_DEF_SCHEMA_VERSION,
+    };
+
+    /// A seed-shaped Mote carrying `config_subset`. `react_seed_params` reads only
+    /// that map, so the rest of the def is arbitrary.
+    fn seed(config: BTreeMap<ConfigKey, ConfigVal>) -> Mote {
+        let def = MoteDef {
+            logic_ref: LogicRef::from_bytes([2u8; 32]),
+            model_id: ModelId("served".into()),
+            prompt_template_hash: PromptTemplateHash::from_bytes([2u8; 32]),
+            tool_contract: BTreeMap::new(),
+            nd_class: NdClass::ReadOnlyNondet,
+            config_subset: config,
+            effect_pattern: EffectPattern::IdempotentByConstruction,
+            critic_for: None,
+            is_topology_shaper: false,
+            inference_params: InferenceParams::default(),
+            critic_check: None,
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([2u8; 32]),
+            GraphPosition(vec![2u8; 32]),
+            smallvec::SmallVec::new(),
+        )
+    }
+
+    fn with_caps(max_turns: Option<u32>, max_tool_calls: Option<u32>) -> Mote {
+        let mut c = BTreeMap::new();
+        c.insert(
+            ConfigKey(PROMPT_KEY.to_string()),
+            ConfigVal(b"\"do the thing\"".to_vec()),
+        );
+        if let Some(t) = max_turns {
+            c.insert(
+                ConfigKey(REACT_MAX_TURNS_KEY.to_string()),
+                ConfigVal(t.to_string().into_bytes()),
+            );
+        }
+        if let Some(t) = max_tool_calls {
+            c.insert(
+                ConfigKey(REACT_MAX_TOOL_CALLS_KEY.to_string()),
+                ConfigVal(t.to_string().into_bytes()),
+            );
+        }
+        seed(c)
+    }
+
+    /// A seed that names no budget gets the DEFAULT — not the ceiling. Before W4 those
+    /// were one constant, so this assertion could not have distinguished them.
+    #[test]
+    fn an_absent_cap_resolves_to_the_default_not_the_ceiling() {
+        let (_, (max_turns, max_tool_calls), _) =
+            react_seed_params(&with_caps(None, None)).expect("a bare seed is admissible");
+        assert_eq!(max_turns, crate::react_shape::REACT_DEFAULT_MAX_TURNS);
+        assert_eq!(max_turns, 16);
+        assert_ne!(
+            max_turns,
+            crate::react_shape::REACT_MAX_TURNS,
+            "the default must not BE the ceiling — that identity is the W4 defect"
+        );
+        assert_eq!(
+            max_tool_calls,
+            crate::react_shape::REACT_DEFAULT_MAX_TOOL_CALLS
+        );
+    }
+
+    /// ⚠ THE CAPABILITY ITSELF: a run may now ASK for a horizon longer than the old
+    /// ceiling. This is the assertion that would have failed before W4 — 9 turns was
+    /// not "over budget", it was unrepresentable.
+    #[test]
+    fn a_seed_may_ask_for_a_longer_horizon_than_the_old_ceiling() {
+        for asked in [9, 16, 24, crate::react_shape::REACT_MAX_TURNS] {
+            let r = react_seed_params(&with_caps(Some(asked), None));
+            assert!(
+                r.is_ok(),
+                "a seed asking for {asked} turns must be admitted (ceiling is {}): {r:?}",
+                crate::react_shape::REACT_MAX_TURNS
+            );
+            assert_eq!(r.expect("admitted").1 .0, asked);
+        }
+    }
+
+    /// …and the ceiling still BITES. Without this, the test above would pass equally
+    /// well against a coordinator that had stopped bounding the budget at all.
+    #[test]
+    fn a_seed_above_the_ceiling_is_still_refused_loudly() {
+        let over = crate::react_shape::REACT_MAX_TURNS + 1;
+        match react_seed_params(&with_caps(Some(over), None)) {
+            Err(CoordinatorError::ReactSeedRefused(msg)) => {
+                assert!(
+                    msg.contains("max_turns"),
+                    "the refusal must name the cap it refused: {msg}"
+                );
+            }
+            other => panic!("a seed above the ceiling must be refused; got {other:?}"),
+        }
+        // Zero is refused at the other end (a chain that can never take a turn).
+        assert!(matches!(
+            react_seed_params(&with_caps(Some(0), None)),
+            Err(CoordinatorError::ReactSeedRefused(_))
+        ));
+        // The tool-call ceiling is independent and also still bites.
+        assert!(matches!(
+            react_seed_params(&with_caps(
+                None,
+                Some(crate::react_shape::REACT_MAX_TOOL_CALLS + 1)
+            )),
+            Err(CoordinatorError::ReactSeedRefused(_))
+        ));
+    }
+
+    /// The refusal text carries LITERAL numbers (`ReactSeedRefused` is a
+    /// `&'static str`, and stable Rust cannot format one from a const). It said
+    /// "<= 8" for as long as the ceiling was 8 and would have gone on saying it. This
+    /// is what makes the literals fail rather than mislead.
+    #[test]
+    fn the_refusal_message_states_the_real_ceilings() {
+        let msg = match react_seed_params(&with_caps(
+            Some(crate::react_shape::REACT_MAX_TURNS + 1),
+            None,
+        )) {
+            Err(CoordinatorError::ReactSeedRefused(m)) => m,
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        assert!(
+            msg.contains(&crate::react_shape::REACT_MAX_TURNS.to_string()),
+            "the refusal says {msg:?} but the turn ceiling is {} — the operator is being \
+             told a number that is not the rule",
+            crate::react_shape::REACT_MAX_TURNS
+        );
+        assert!(
+            msg.contains(&crate::react_shape::REACT_MAX_TOOL_CALLS.to_string()),
+            "the refusal says {msg:?} but the tool-call ceiling is {}",
+            crate::react_shape::REACT_MAX_TOOL_CALLS
+        );
     }
 }

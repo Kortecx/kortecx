@@ -3398,6 +3398,7 @@ impl KxGateway for GatewayService {
             feature_vision: facts.feature_vision,
             audit_log_enabled: facts.audit_log_enabled,
             react_max_turns: facts.react_max_turns,
+            react_turn_ceiling: facts.react_turn_ceiling,
             react_max_tool_calls: facts.react_max_tool_calls,
             embed_model_id: facts.embed_model_id.clone(),
             // Model Control v2: the active default (advisory) + the download posture.
