@@ -30,6 +30,25 @@ export function turnStepType(t: DescribableTurn): StepType {
   return t.branch === "tool" ? classifyStep("TOOL", { [t.toolId]: "" }) : "model";
 }
 
+/**
+ * How to name the OBSERVATION a turn produced — the Mote that actually fired the
+ * tool the turn proposed.
+ *
+ * These nodes were the half the turn-label fix did not cover. A turn reads
+ * `Turn 0 · MCP · mcp-echo/echo@1`; the observation hanging off it read
+ * `bca492fe…a2b3` with a `WORLD_MUTATING` badge — a content hash and a
+ * determinism-class enum, which is machinery, not what happened. It IS the
+ * result of that turn's tool call, and the turn already knows which tool.
+ *
+ * Derived in the reader from the observation's parent edge, so it needs no new RPC
+ * and cannot disagree with the turn it hangs off.
+ */
+export function observationLabel(parent: DescribableTurn): string {
+  return parent.branch === "tool" && parent.toolId
+    ? `result of ${parent.toolId}@${parent.toolVersion}`
+    : "tool result";
+}
+
 /** A short human phrase for the turn's branch (the card's status line). */
 export function branchLabel(t: DescribableTurn): string {
   switch (t.branch) {

@@ -62,14 +62,26 @@ describe("toRfEdge — a DERIVED edge", () => {
     nonCascade: false,
   };
 
-  it("is finely dotted, class-marked, and carries an OPEN arrow head", () => {
+  it("is dashed, class-marked, and carries an OPEN arrow head", () => {
     // Three non-colour signals, because a synthesised link must never be mistakable for
     // a recorded parent — and colour alone would fail the dual-theme bar anyway.
     const e = toRfEdge({ ...base, derived: true });
     expect(e.className).toContain("dag-edge--derived");
-    expect(e.style?.strokeDasharray).toBe("2 5");
     expect(e.markerEnd).toMatchObject({ type: "arrow" });
     expect(e.data?.derived).toBe(true);
+
+    // It is DASHED — asserted as a property rather than as the exact pattern. The
+    // pattern was `2 5`, two parts ink to five of gap, and at default zoom that read
+    // as almost nothing on the canvas; pinning the literal made the legibility defect
+    // look like the specification. What must hold is that a dash exists and that
+    // enough of it is ink to see.
+    const dash = String(e.style?.strokeDasharray ?? "");
+    expect(dash, "a derived edge must be dashed").toMatch(/^\d+\s+\d+$/);
+    const [on = 0, off = 0] = dash.split(/\s+/).map(Number);
+    expect(
+      on,
+      "the dash must carry as much ink as gap, or it disappears at 1x",
+    ).toBeGreaterThanOrEqual(off);
   });
 
   it("leaves the durable path untouched — no derived class, closed head", () => {

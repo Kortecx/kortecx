@@ -65,10 +65,17 @@ pub struct ServerInfoFacts {
     /// A JSONL operator audit log is configured.
     pub audit_log_enabled: bool,
     /// T-MULTI-ELEMENT-TOOLCALLS: the server's DEFAULT agentic model-turn budget — the
-    /// `max_turns` cap a react/agent run is admitted under when the client omits it
-    /// (also the hard ceiling). Read-only; a run overrides it per-invocation via the
-    /// `--max-turns` / SDK `max_turns` param.
+    /// `max_turns` cap a react/agent run is admitted under when the client omits it.
+    /// Read-only; a run overrides it per-invocation via the `--max-turns` / SDK
+    /// `max_turns` param.
+    ///
+    /// ⚠ W4: this is NO LONGER also the hard ceiling — see [`Self::react_turn_ceiling`].
+    /// The two were one constant, so the only budget a run could name was one it could
+    /// not exceed.
     pub react_max_turns: u32,
+    /// W4: the HARD CEILING on a run's model-turn budget — the largest `max_turns` a
+    /// run may ASK for. A seed above it is refused loudly. Display only.
+    pub react_turn_ceiling: u32,
     /// T-MULTI-ELEMENT-TOOLCALLS: the server's DEFAULT total tool-call budget — the
     /// `max_tool_calls` cap (and ceiling). A turn may fire several tools at once, so
     /// this is independent of `react_max_turns`. Read-only; overridable per-invocation

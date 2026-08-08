@@ -357,6 +357,13 @@ test("a live agent run's graph draws every node clear of every other, in both th
       { label: "narrow-tall", width: 900, height: 1200 },
     ] as const;
     const signatures = new Map<string, string>();
+    // ⚠ The VIEWPORT TRANSFORM, measured separately from the layout. The W3′ review
+    // reported it byte-identical across three container sizes and flagged it as an
+    // OPEN QUESTION rather than a defect, because the layout signature below moved and
+    // that was the only thing under test. The two are different claims: `layout moved`
+    // says dagre re-ran; `transform moved` says `fitView` re-ran. A graph can relayout
+    // perfectly and still be framed by a stale fit. Recorded whichever way it comes out.
+    const transforms = new Map<string, string>();
     for (const shape of shapes) {
       await page.setViewportSize({ width: shape.width, height: shape.height });
       // The refit is rAF-driven off reactflow's own container measurement.
@@ -386,11 +393,50 @@ test("a live agent run's graph draws every node clear of every other, in both th
           .map((c) => `${Math.round(c.x / zoom)},${Math.round(c.y / zoom)}`)
           .join(" "),
       );
+      // reactflow writes the fit as a `transform` on its own viewport element — this
+      // reads what `fitView` actually produced, not what the layout did.
+      const t = await page
+        .locator(".react-flow__viewport")
+        .first()
+        .evaluate((el) => getComputedStyle(el).transform);
+      transforms.set(shape.label, t);
+      testInfo.annotations.push({
+        type: "fit-transform",
+        description: `${shape.label} (${shape.width}x${shape.height}): ${t}`,
+      });
+      console.log(`[graph-legibility] fit-transform ${shape.label}: ${t}`);
     }
     expect(
       signatures.get("wide-short"),
       "the layout is identical at 1600x700 and 900x1200 — it is not responding to the viewport",
     ).not.toEqual(signatures.get("narrow-tall"));
+
+    // ⚠⚠ A DEFECT-REPRODUCING ASSERTION. IT IS SUPPOSED TO SAY `toEqual`. INVERT IT
+    // TO `.not.toEqual` WHEN THE DEFECT IS FIXED, AND DELETE THIS PARAGRAPH.
+    //
+    // The prior review flagged, as an open question rather than a claim, that
+    // `fitView`'s transform looked byte-identical across container sizes. Measured on a
+    // live model-served run, it is:
+    //
+    //   1600x700  -> matrix(1.15854, 0, 0, 1.15854, 102.561, -0.536585)
+    //   900x1200  -> matrix(1.15854, 0, 0, 1.15854, 102.561, -0.536585)
+    //
+    // …while the LAYOUT above demonstrably did change (the zoom-normalised position
+    // signatures differ, which is asserted). So dagre re-runs and the viewport does
+    // not: the canvas keeps a frame computed for a container that no longer exists.
+    // Two container shapes whose aspect ratios differ by more than 3x cannot honestly
+    // produce the same fit.
+    //
+    // Recorded as a reproduction rather than left as a failing assertion, so the suite
+    // states what is true today and goes RED the moment someone fixes it — the same
+    // shape as `a_react_warrant_change_conflicts_on_an_already_seeded_state_dir`, which
+    // was written to be inverted and duly was.
+    expect(
+      transforms.get("wide-short"),
+      "fitView now produces DIFFERENT transforms at 1600x700 and 900x1200 — the refit " +
+        "defect appears to be FIXED. Invert this assertion to `.not.toEqual` and " +
+        "delete the paragraph above it.",
+    ).toEqual(transforms.get("narrow-tall"));
 
     // ── THE BOX IS DERIVED FROM THE RENDERED CARD, not from a constant. ─────────
     // Grow the card by more than a row's worth and the layout must follow. This is

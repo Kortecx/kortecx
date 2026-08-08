@@ -26,7 +26,7 @@
 
 use kx_llamacpp::{
     Batch, ChatMessage, Context, ContextParams, FlashAttn, Generator, KvCacheType, LlamaBackend,
-    Model, ModelParams, PoolingType, Sampler,
+    LlamaError, Model, ModelParams, PoolingType, Sampler,
 };
 
 const MODEL_PATH: &str = env!(
@@ -699,6 +699,150 @@ fn smoke_generator_iterator() {
     );
     assert!(tokens.len() <= 5);
     eprintln!("generator yielded: {tokens:?}");
+}
+
+/// ⚠ W4 — THE REAL-PATH PROOF that a full context window is REPORTED.
+///
+/// Exhaustion used to `return None`, which is the same signal EOG produces, so a
+/// generation cut off mid-token was byte-indistinguishable from one the model
+/// chose to end. This drives a genuine overflow on a real GGUF and asserts the
+/// caller is told.
+///
+/// Three arms, because one alone would not settle it:
+///   1. the boundary fires DETERMINISTICALLY (positioned at the window, no
+///      sampling involved, so it cannot depend on what the model emits);
+///   2. a NATURAL generation that runs out of window reports the same error —
+///      this is the arm that reproduces the original symptom;
+///   3. the NEGATIVE CONTROL: a generation with room to spare must NOT report it,
+///      or arms 1-2 would pass just as well against a function that always errors.
+#[test]
+fn smoke_generator_reports_a_full_context_instead_of_stopping_silently() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, MODEL_PATH).expect("load");
+    let vocab = model.vocab();
+
+    // The REQUESTED window and the SERVED one are different numbers: llama.cpp
+    // pads `n_ctx` when it builds the context, so a test that positions itself at
+    // the value it asked for lands INSIDE a larger window, sails past the
+    // boundary, and samples from a context with no logits — which aborts the
+    // process rather than failing an assertion. Every arm below therefore reads
+    // `ctx.n_ctx()` back and compares like with like.
+    const REQUESTED_N_CTX: u32 = 32;
+
+    // ---- arm 1: the boundary itself, independent of sampling -----------------
+    {
+        let mut ctx = Context::new_with_params(
+            &model,
+            &ContextParams::new()
+                .with_n_ctx(REQUESTED_N_CTX)
+                .with_n_seq_max(1),
+        )
+        .expect("context");
+        let served = ctx.n_ctx();
+        let mut sampler = Sampler::greedy(&backend).expect("greedy");
+        // Positioned exactly AT the SERVED window: the very first `next()` has
+        // nowhere to put a token. No token is sampled, so this arm is deterministic.
+        let mut gen = Generator::from_prefilled(
+            &mut ctx,
+            &mut sampler,
+            &vocab,
+            i32::try_from(served).unwrap(),
+        );
+        match gen.next() {
+            Some(Err(LlamaError::ContextExhausted { n_ctx, pos })) => {
+                assert_eq!(n_ctx, served);
+                assert_eq!(pos, served);
+            }
+            other => panic!(
+                "a generator positioned at the served window ({served}) must REPORT \
+                 exhaustion; got {other:?}"
+            ),
+        }
+        // …and it is terminal: the iterator does not keep erroring forever.
+        assert!(
+            gen.next().is_none(),
+            "exhaustion must be reported ONCE, then end the stream"
+        );
+    }
+
+    // ---- arm 2: a natural generation that runs out of room -------------------
+    {
+        let prompt = vocab
+            .tokenize("Once upon a time", true, false)
+            .expect("tokenize");
+        let mut ctx = Context::new_with_params(
+            &model,
+            &ContextParams::new()
+                .with_n_ctx(REQUESTED_N_CTX)
+                .with_n_seq_max(1),
+        )
+        .expect("context");
+        let served = ctx.n_ctx();
+        assert!(
+            u32::try_from(prompt.len()).unwrap() < served,
+            "the prompt must FIT the served window, or this arm would prove nothing \
+             about GENERATION running out of room"
+        );
+        let mut sampler = Sampler::greedy(&backend).expect("greedy");
+        let gen = Generator::new(&mut ctx, &mut sampler, &vocab, prompt).expect("generator");
+
+        // Ask for far more tokens than the window can hold, and keep the LAST item.
+        let mut produced = 0_u32;
+        let mut terminal = None;
+        for item in gen.take(4 * served as usize) {
+            match item {
+                Ok(t) => {
+                    produced += 1;
+                    // An EOG here would end the stream before the window fills and
+                    // this arm would prove nothing — fail loudly rather than skip.
+                    assert!(
+                        !vocab.is_eog(t),
+                        "the model emitted EOG after {produced} tokens, before the \
+                         {served}-token window filled — this arm cannot observe \
+                         exhaustion and must not silently pass"
+                    );
+                }
+                Err(e) => {
+                    terminal = Some(e);
+                    break;
+                }
+            }
+        }
+        match terminal {
+            Some(LlamaError::ContextExhausted { n_ctx, pos }) => {
+                assert_eq!(n_ctx, served);
+                assert_eq!(pos, served, "generation stops AT the window");
+                eprintln!(
+                    "natural overflow reported after {produced} generated tokens \
+                     (requested n_ctx {REQUESTED_N_CTX}, served {served})"
+                );
+            }
+            other => panic!(
+                "a generation that outruns its window must report ContextExhausted; got {other:?}"
+            ),
+        }
+    }
+
+    // ---- arm 3: the negative control -----------------------------------------
+    {
+        let prompt = vocab
+            .tokenize("Once upon a time", true, false)
+            .expect("tokenize");
+        let mut ctx = Context::new_with_params(
+            &model,
+            &ContextParams::new().with_n_ctx(512).with_n_seq_max(1),
+        )
+        .expect("context");
+        let mut sampler = Sampler::greedy(&backend).expect("greedy");
+        let gen = Generator::new(&mut ctx, &mut sampler, &vocab, prompt).expect("generator");
+        // Five tokens out of a 512 window: nowhere near the wall.
+        let taken: Result<Vec<_>, _> = gen.take(5).collect();
+        assert!(
+            taken.is_ok(),
+            "a generation with room to spare must NOT report exhaustion — without \
+             this control the arms above would pass against an always-error stub: {taken:?}"
+        );
+    }
 }
 
 /// Determinism on the HF-shaped surface: two `Generator` runs with greedy

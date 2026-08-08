@@ -63,7 +63,7 @@ name = "kx-proto"
 # is the SAFE arm), but exhaustive struct literals in Rust give every construction site a
 # field => breaking-in-Rust, minor. Off-journal, off-digest: RAM residency is ephemeral
 # state that rebuilds empty on restart and has never been an identity input.
-version = "0.20.0"
+version = "0.21.0"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = { workspace = true }

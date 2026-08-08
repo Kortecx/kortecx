@@ -112,8 +112,8 @@ pub(crate) fn shaper_warrant(model_id: &ModelId, exec_class: ExecutorClass) -> W
         tool_grants: std::collections::BTreeSet::new(),
         model_route: ModelRoute {
             model_id: model_id.clone(),
-            max_input_tokens: MAX_SERVE_N_CTX,
-            max_output_tokens: MAX_SERVE_N_CTX,
+            max_input_tokens: max_serve_n_ctx(),
+            max_output_tokens: max_serve_n_ctx(),
             max_calls: 8,
         },
         resource_ceiling: ResourceCeiling {
@@ -723,15 +723,64 @@ pub(crate) fn pulled_ollama_entry(
 /// resolver (`inference`); the FFI-free Ollama path reports the daemon's own window.
 #[cfg(feature = "inference")]
 const DEFAULT_SERVE_N_CTX: u32 = 4096;
-/// Ceiling on the served context window — bounds KV-cache memory regardless of
-/// the model's (possibly very large) declared training context. Also the shaper
-/// warrant's token ceiling, so it is NOT feature-gated.
-const MAX_SERVE_N_CTX: u32 = 8192;
 /// Minimum context the agent's tool-use loop needs (mirrors the harness's
-/// `kx_model_harness::registration::AGENT_MIN_CTX_TOKENS`). Used only by the GGUF
-/// resolver + validator (`inference`).
+/// `kx_model_harness::registration::AGENT_MIN_CTX_TOKENS`).
+///
+/// W4: the value moved to `env_caps` — this module is `serve-engine`-gated, but the
+/// `KX_SERVE_N_CTX` resolver clamps to this floor on EVERY build, so the constant
+/// could not stay behind the feature. Re-exported under its established name because
+/// that name is what documents the harness mirror.
+/// Gated to match every consumer (`agent_requirements`, `resolve_n_ctx`, the const
+/// lockstep and its test are all `inference`) — a `serve-engine,hnsw` build has no use
+/// for it, and an ungated import is an `unused_imports` ERROR there under `-D warnings`.
+/// That combination is exercised by `run-feature-gates.sh`'s `clippy-serve-engine-hnsw`
+/// arm and by NOTHING in `just ci`, which is where it was caught.
 #[cfg(feature = "inference")]
-const AGENT_MIN_CTX_TOKENS: u32 = 2048;
+use crate::env_caps::MIN_SERVE_N_CTX as AGENT_MIN_CTX_TOKENS;
+
+/// Ceiling on the served context window — bounds KV-cache memory regardless of the
+/// model's (possibly very large) declared training context. Also the shaper
+/// warrant's token ceiling, so it is NOT feature-gated.
+///
+/// W4: was a bare `const MAX_SERVE_N_CTX: u32 = 8192`. It is now resolved per call
+/// from `KX_SERVE_N_CTX`, defaulting to the SAME 8192 so an unset environment is
+/// byte-identical — see [`crate::env_caps::serve_n_ctx_ceiling`] for why the
+/// default must not move.
+fn max_serve_n_ctx() -> u32 {
+    crate::env_caps::serve_n_ctx_ceiling()
+}
+
+/// ⚠ W4 — THE CONTEXT-WINDOW LOCKSTEP, enforced by the COMPILER.
+///
+/// These relations are between constants, so a test asserting them is a test that
+/// cannot fail at runtime — clippy says so (`assertion has a constant value`), and it is
+/// right. A `const` assertion is strictly better than the test it replaces: the drift is
+/// caught at BUILD time, before anything runs, and it cannot be skipped, filtered out or
+/// left behind a feature gate nobody exercises.
+///
+/// What each one protects, since a compile error has no room for a message:
+///   • floor ≤ GGUF-fallback — otherwise every model without a declared window is served
+///     a context too small for the agent loop, and registration refuses it as "unfit";
+///   • fallback ≤ default-ceiling — otherwise `resolve_n_ctx`'s clamp silently LOWERS
+///     the fallback and the declared default is a fiction;
+///   • default-ceiling ≤ hard-bound — otherwise `KX_SERVE_N_CTX` can never reach its own
+///     default and the knob is inert;
+///   • the gateway's fallback == `kx_inference`'s — two independently-declared defaults
+///     for the same window; a serve resolving one while the in-process backend registers
+///     a descriptor declaring the other type-checks, then truncates.
+/// The runtime half — that the shaper WARRANT reads the same resolver as the served
+/// window — cannot be const and stays in `the_shaper_warrant_tracks_the_served_window`.
+#[cfg(feature = "inference")]
+const _: () = {
+    assert!(AGENT_MIN_CTX_TOKENS <= DEFAULT_SERVE_N_CTX);
+    assert!(DEFAULT_SERVE_N_CTX <= crate::env_caps::DEFAULT_MAX_SERVE_N_CTX);
+    assert!(crate::env_caps::DEFAULT_MAX_SERVE_N_CTX <= crate::env_caps::HARD_MAX_SERVE_N_CTX);
+    assert!(DEFAULT_SERVE_N_CTX == kx_inference::DEFAULT_N_CTX);
+    // The knob's default is deliberately the pre-W4 clamp, so an unset environment is
+    // byte-identical. Pinned so "unchanged" is a fact rather than a claim in a comment.
+    assert!(crate::env_caps::DEFAULT_MAX_SERVE_N_CTX == 8_192);
+    assert!(AGENT_MIN_CTX_TOKENS < crate::env_caps::HARD_MAX_SERVE_N_CTX);
+};
 
 /// The fixed system instruction for the served chat / agentic model (the
 /// precise-assistant "training contract"). Shared by the model-agnostic
@@ -1099,12 +1148,12 @@ fn agent_provided(context_window: u32) -> ProvidedCapabilities {
 }
 
 /// Resolve the served context window: the GGUF's declared `*.context_length`
-/// (fail-soft), else [`DEFAULT_SERVE_N_CTX`], clamped to [`MAX_SERVE_N_CTX`].
+/// (fail-soft), else [`DEFAULT_SERVE_N_CTX`], clamped to [`max_serve_n_ctx`].
 #[cfg(feature = "inference")]
 fn resolve_n_ctx(gguf: &Path) -> u32 {
     read_context_length(gguf)
         .unwrap_or(DEFAULT_SERVE_N_CTX)
-        .clamp(AGENT_MIN_CTX_TOKENS, MAX_SERVE_N_CTX)
+        .clamp(AGENT_MIN_CTX_TOKENS, max_serve_n_ctx())
 }
 
 /// Build the in-process inference backend for the served model, fail-closed: the
@@ -2967,7 +3016,36 @@ mod tests {
     fn n_ctx_is_clamped_to_ceiling() {
         // A missing GGUF → default, clamped within [min, max].
         let n = resolve_n_ctx(Path::new("/nonexistent.gguf"));
-        assert!((AGENT_MIN_CTX_TOKENS..=MAX_SERVE_N_CTX).contains(&n));
+        assert!((AGENT_MIN_CTX_TOKENS..=max_serve_n_ctx()).contains(&n));
+    }
+
+    /// ⚠ W4 — the RUNTIME half of the context-window lockstep.
+    ///
+    /// The constant relations are enforced at BUILD time by the `const _: () = { … }`
+    /// block beside `max_serve_n_ctx` — a test could not fail on them, and clippy
+    /// rejects such an assertion as constant. What is left here is the part that is
+    /// genuinely runtime: the shaper WARRANT must authorise exactly the window the
+    /// serve offers. Read off a REAL `shaper_warrant(..)` rather than off the constant,
+    /// so re-hardcoding the ceiling there fails HERE rather than passing quietly.
+    ///
+    /// ⚠ NOT covered anywhere in this crate: `AGENT_MIN_CTX_TOKENS` is duplicated in
+    /// `kx_model_harness::registration`, and kx-gateway does not depend on the harness.
+    /// The harness is the only crate that sees both it and `kx_inference::DEFAULT_N_CTX`,
+    /// so that pair is pinned in `kx_model_harness::registration`.
+    #[cfg(feature = "inference")]
+    #[test]
+    fn the_shaper_warrant_tracks_the_served_window() {
+        let w = shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox);
+        assert_eq!(
+            w.model_route.max_input_tokens,
+            max_serve_n_ctx(),
+            "the shaper warrant's input ceiling no longer tracks the served window"
+        );
+        assert_eq!(
+            w.model_route.max_output_tokens,
+            max_serve_n_ctx(),
+            "the shaper warrant's output ceiling no longer tracks the served window"
+        );
     }
 
     #[test]

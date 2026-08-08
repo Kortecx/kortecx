@@ -14,10 +14,29 @@ import { DigestChip } from "./DigestChip";
  * uniform-empty item) · empty result · binary · truncated preview · text.
  */
 
-/** Collapse whitespace + clip to a one-line preview (the dense-context headline). */
+/**
+ * Collapse whitespace + clip to a one-line preview (the dense-context headline).
+ *
+ * The clip lands on a WORD BOUNDARY where one is available near the budget. A raw
+ * `slice(0, max)` cut mid-token, and on a JSON result that reads as corruption
+ * rather than as brevity — the DAG node showed `{ "echoed": { "text": "alpha…`,
+ * which a reader cannot tell from a truncated *value*. Backing off to the last space
+ * costs a few characters and makes the ellipsis mean "there is more" instead of
+ * "something went wrong".
+ *
+ * A single unbroken token longer than the budget (a hash, a URL, minified JSON) has
+ * no boundary to find, and a hard clip is then the honest answer — hence the floor:
+ * never give back less than three-quarters of what was asked for.
+ */
 export function oneLine(text: string, max = 140): string {
   const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+  if (flat.length <= max) {
+    return flat;
+  }
+  const hard = flat.slice(0, max);
+  const boundary = hard.lastIndexOf(" ");
+  const clipped = boundary >= Math.floor(max * 0.75) ? hard.slice(0, boundary) : hard;
+  return `${clipped.trimEnd()}…`;
 }
 
 export function ResultPreview({

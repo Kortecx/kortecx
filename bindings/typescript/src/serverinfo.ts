@@ -52,8 +52,9 @@ export class ServerInfo {
     readonly featureVision: boolean,
     /** A JSONL operator audit log is configured. */
     readonly auditLogEnabled: boolean,
-    /** T-MULTI-ELEMENT-TOOLCALLS: the server's DEFAULT agentic model-turn budget (also
-     *  the hard ceiling); a run overrides it per-invocation via `maxTurns`. */
+    /** The server's DEFAULT agentic model-turn budget; a run overrides it
+     *  per-invocation via `maxTurns`. ⚠ W4: this is NO LONGER also the hard ceiling —
+     *  see {@link reactTurnCeiling}. */
     readonly reactMaxTurns: number = 0,
     /** T-MULTI-ELEMENT-TOOLCALLS: the server's DEFAULT total tool-call budget (a turn
      *  may fire several at once, so independent of `reactMaxTurns`); overridable per-run. */
@@ -70,6 +71,12 @@ export class ServerInfo {
      *  `KX_SERVE_WORKER_POOL`; `1` = single worker, `>1` runs Pure/IO/tool Motes
      *  concurrently). `0` from an old server ⇒ treat as `1` (see {@link effectiveWorkerPool}). */
     readonly workerPool: number = 0,
+    /** W4: the HARD CEILING on a run's model-turn budget — the largest `maxTurns` a run
+     *  may ASK for, as opposed to {@link reactMaxTurns}, which is what it gets by
+     *  default. `0` from a server predating W4. ⚠ Appended LAST: this is a POSITIONAL
+     *  constructor, and inserting a parameter in the middle silently re-binds every
+     *  argument after it at every call site. */
+    readonly reactTurnCeiling: number = 0,
   ) {}
 
   /** The pool size to display: `max(1, workerPool)` (an old server sends 0). */
@@ -105,6 +112,7 @@ export class ServerInfo {
       r.allowModelPull,
       r.embedModelIsDecoder,
       Number(r.workerPool),
+      r.reactTurnCeiling,
     );
   }
 
@@ -137,6 +145,7 @@ export class ServerInfo {
       allow_model_pull: this.allowModelPull,
       embed_model_is_decoder: this.embedModelIsDecoder,
       worker_pool: this.workerPool,
+      react_turn_ceiling: this.reactTurnCeiling,
     };
   }
 }

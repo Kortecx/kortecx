@@ -30,6 +30,25 @@ use kx_mote::ModelId;
 /// stand-in models used before the finetune ships also bind.
 pub const AGENT_MIN_CTX_TOKENS: u32 = 2048;
 
+/// ⚠ W4 — the HARNESS HALF of the context-window lockstep, enforced by the COMPILER.
+///
+/// The gateway pins the rest (`model_exec`'s own `const` block plus
+/// `the_shaper_warrant_tracks_the_served_window`) but cannot reach this crate:
+/// kx-gateway does not depend on kx-model-harness. This crate is the ONLY one that sees
+/// both [`AGENT_MIN_CTX_TOKENS`] and the in-process backend's `DEFAULT_N_CTX`
+/// (`kx-inference` is pulled here with `features = ["llamacpp"]` unconditionally), so
+/// the pair is checked here.
+///
+/// The failure it exists to catch is quiet: lower `DEFAULT_N_CTX` under this floor and
+/// every model registered without a declared window stops binding — `register_kortecx`
+/// returns `NotTypeOk`, which reads as "bad model", not "bad default".
+const _: () = {
+    assert!(kx_inference::DEFAULT_N_CTX >= AGENT_MIN_CTX_TOKENS);
+    // The floor this crate publishes and the gateway mirrors by hand. If it moves, BOTH
+    // copies move — the gateway's lives in `env_caps::MIN_SERVE_N_CTX`.
+    assert!(AGENT_MIN_CTX_TOKENS == 2048);
+};
+
 /// Why [`register_kortecx`] refused to register a model.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RegistrationError {

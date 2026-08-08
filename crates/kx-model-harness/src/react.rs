@@ -92,7 +92,18 @@ pub struct ReactBudget {
 impl Default for ReactBudget {
     fn default() -> Self {
         Self {
-            max_turns: 8,
+            // ⚠ W4: 8 → 16, in lockstep with `kx_coordinator::REACT_DEFAULT_MAX_TURNS`.
+            // This is the R49 cross-implementation pin: a default-cap harness chain and
+            // a default-cap serve chain must be the same length, or a cold re-fold of a
+            // harness-written journal on the live binary diverges. The two crates sit on
+            // opposite sides of the dep wall (the coordinator must not depend on this
+            // crate), so nothing but that pairing keeps them equal —
+            // `kx_coordinator::react_shape::tests::react_budget_default_matches_the_harness`
+            // spells 16 independently and fails if either side moves alone.
+            max_turns: 16,
+            // NOT pinned, and never was: the coordinator's default is 20. Left at 8
+            // deliberately — the harness drives one tool per turn, so its tool budget
+            // and its turn budget are the same number for a different reason.
             max_tool_calls: 8,
         }
     }
@@ -679,5 +690,39 @@ where
         // No effect read-back: recovery relies on the deterministic idempotency-key
         // dedup at re-dispatch (same as DemoBroker / ModelBroker).
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod budget_pin_tests {
+    use super::ReactBudget;
+
+    /// ⚠ W4 — THE R49 TURN-BUDGET PIN, harness half.
+    ///
+    /// The literal `16` is spelled here and INDEPENDENTLY in
+    /// `kx_coordinator::react_shape::REACT_DEFAULT_MAX_TURNS`. Deliberately a literal
+    /// on both sides rather than an equality between them: the coordinator sits below
+    /// the dep wall and cannot depend on this crate, so there is no shared symbol —
+    /// the `SALTED_TURN0_GOLDEN` convention, for the same reason. Move one side alone
+    /// and the twin fails.
+    ///
+    /// What breaks if they disagree: a default-cap harness chain and a default-cap
+    /// serve chain run different numbers of turns, so a cold re-fold of a
+    /// harness-written journal on the live binary diverges from the durable facts.
+    #[test]
+    fn default_turn_budget_matches_the_coordinator() {
+        assert_eq!(
+            ReactBudget::default().max_turns,
+            16,
+            "if this moved, move kx_coordinator::REACT_DEFAULT_MAX_TURNS too"
+        );
+    }
+
+    /// The tool-call halves are NOT twinned and never were — the coordinator's
+    /// default is 20. Asserted as an inequality so a later reader does not "restore
+    /// symmetry" into a claim that was never true.
+    #[test]
+    fn the_tool_call_default_is_not_the_coordinators() {
+        assert_eq!(ReactBudget::default().max_tool_calls, 8);
     }
 }

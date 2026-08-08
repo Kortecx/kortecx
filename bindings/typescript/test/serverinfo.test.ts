@@ -65,6 +65,10 @@ describe("ServerInfo.fromProto", () => {
       audit_log_enabled: true,
       react_max_turns: 0,
       react_max_tool_calls: 0,
+      // The turn CEILING is separate from the default: a run gets `react_max_turns`
+      // and may ask for up to this. `0` here because the fixture predates the field,
+      // which is exactly what an older server sends.
+      react_turn_ceiling: 0,
       embed_model_id: "embeddinggemma",
       active_model_id: "",
       allow_model_pull: false,

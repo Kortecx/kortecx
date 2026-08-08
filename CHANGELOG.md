@@ -6,6 +6,46 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **A run can now ask for a longer horizon, and the ceiling is no longer the default.** An
+  agentic run gets **16 model turns** by default and may request up to **32**. These used to be
+  the same number, which meant a task needing a ninth turn was not over budget — it could not
+  be expressed at all, because the only budget a run could name was one it was not allowed to
+  exceed. Ask for more with `--max-turns` on `kx agent run`, or `max_turns` in either SDK; a
+  request above the ceiling is still refused, and the refusal names the ceiling. `kx info` now
+  prints both (`max_turns 16 (up to 32)`), and Settings says the same in words.
+
+- **The served context window is yours to set.** `KX_SERVE_N_CTX` chooses how much context the
+  serve offers a model, between 2048 and 131072. It defaults to **8192 — exactly what it was
+  before** — so a serve with nothing set behaves identically; raise it when the machine has the
+  memory for a bigger KV cache. A value outside the range, or one that is not a number, falls
+  back to the default rather than being silently accepted.
+
+### Fixed
+
+- **A prompt that outgrows the context window now says so, instead of returning a short
+  answer.** When generation reached the end of the window the runtime stopped and reported
+  nothing — the same signal it uses when a model finishes normally — so a reply that had been
+  cut off mid-sentence was indistinguishable from a complete one. The most common way to meet
+  this was a tool call that arrived truncated, which read as "the model will not emit a complete
+  tool call". A run that exhausts its window now fails with a message naming the window and the
+  point it stopped at, so the answer is to serve a larger window or shorten the prompt rather
+  than to doubt the model.
+
+- **A tool argument left empty is treated as missing, not as an empty value.** Sending
+  `{"query": ""}` to a tool that requires `query` used to be accepted, search for nothing, and
+  return an empty result the model then answered from — with no indication anything was wrong.
+  An empty string on a required parameter is now refused with the same "missing required
+  parameter" message as omitting it entirely, so the model can correct itself on the next turn.
+  Optional parameters are unaffected: there, an empty string still means "not supplied".
+
+- **The run graph reads as a run, not as a data structure.** The minimap showed a single flat
+  colour and looked like an empty panel; it now colours each node by its state, in both themes.
+  A tool result hanging off an agent turn showed a content hash and a `WORLD_MUTATING` label —
+  it now says which turn it belongs to and which tool produced it. Result previews no longer cut
+  off mid-word, and the dotted links that show the agent's turn order are legible at normal
+  zoom. Edges feeding work that is still running are animated, and stop when it settles —
+  suppressed entirely if your system asks for reduced motion.
+
 - **A connector can now be given the whole environment it needs, by reference.** A stdio MCP
   server used to receive exactly one environment variable, and its name was forced to be the
   name of the stored secret — so any server wanting two was impossible to configure. A

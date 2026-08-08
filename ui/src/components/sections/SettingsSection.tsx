@@ -97,9 +97,16 @@ export function SettingsSection() {
               <dt>Audit log</dt>
               <dd>{info.data.auditLogEnabled ? "on" : "off"}</dd>
               <dt>Agentic budget</dt>
+              {/* W4: the default and the ceiling are different numbers now, and saying
+                  "up to <default>" understated what the agent can do — it read as a hard
+                  limit when it is the starting allowance. An older server sends 0 for the
+                  ceiling, so the second clause only appears when there is one to report. */}
               <dd data-testid="settings-agentic-budget">
-                up to {info.data.reactMaxTurns} model turns · {info.data.reactMaxToolCalls} tool
-                calls <span className="muted">(default; per-run overridable)</span>
+                {info.data.reactMaxTurns} model turns per run
+                {info.data.reactTurnCeiling > info.data.reactMaxTurns ? (
+                  <>, up to {info.data.reactTurnCeiling} when a task asks for more</>
+                ) : null}{" "}
+                · {info.data.reactMaxToolCalls} tool calls
               </dd>
               <dt>Worker pool</dt>
               <dd data-testid="settings-worker-pool">

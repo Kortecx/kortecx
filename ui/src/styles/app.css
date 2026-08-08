@@ -620,10 +620,72 @@ button:disabled {
  * introducing a hue: the signals that separate it are the FINE dot pattern (2 5, vs
  * the control dash 5 4), an open arrow head, and the canvas legend — never colour
  * alone, and nothing new for the dual-theme contrast audit to cover. */
+/* The agent's TURN ORDER. It was drawn in the muted body colour at `2 5` — two pixels
+ * of ink to every five of gap — and at default zoom that is the least legible line on
+ * the canvas, which is backwards: the turn order is the single thing a reader most
+ * wants from an agentic run. It stays a DASH (that is what says "inferred from the
+ * turn record, not read from the graph", alongside the open arrow head and the
+ * legend), but at full foreground weight and a 56% duty cycle instead of 29%. */
 .dag-edge--derived {
-  stroke: var(--fg-muted);
-  stroke-dasharray: 2 5;
+  stroke: var(--fg);
+  stroke-dasharray: 5 4;
 }
+/* ── THE MOTION LAYER ────────────────────────────────────────────────────────
+ * Motion here is a READING of the run, not decoration on it: every rule below is
+ * driven by a state the runtime actually reports, so a settled graph is completely
+ * still and a replayed one animates nothing. Implemented as CSS keyframes rather
+ * than in the animation library on purpose — the eager-JS budget has roughly 2 KB
+ * of headroom, and a dash that moves does not need a JavaScript frame loop.
+ *
+ * ⚠ Every rule in this block is silenced by the `prefers-reduced-motion` block at
+ * the end. Playwright sets `reducedMotion: "reduce"` for EVERY run
+ * (`e2e/fixtures/connect.ts`), which is deliberate and load-bearing for flake — so
+ * the only spec that can see any of this is one that opts back in with
+ * `emulateMedia({ reducedMotion: "no-preference" })`. Without such a spec this
+ * block is untested, whatever the suite says. */
+
+/* An edge feeding work that has NOT settled: the dash travels toward the target, so
+ * the direction of the run is visible at a glance. */
+@keyframes dag-edge-flow {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+.dag-edge--live {
+  stroke-dasharray: 5 4;
+  animation: dag-edge-flow 900ms linear infinite;
+}
+/* A live edge is also drawn at full strength — an in-flight link is the one a reader
+ * is following, and it was inheriting the same muted treatment as everything else. */
+.dag-edge--live:not(.dag-edge--derived) {
+  stroke: var(--accent);
+}
+
+/* The node the run is currently inside: its accent bar breathes. Distinct from the
+ * status dot's pulse (which marks non-terminal) — this is the same fact rendered on
+ * the card's own edge so it reads at the zoom a whole graph is viewed at. */
+@keyframes dag-node-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.dag-node:has(.dag-node__dot--pulse) .dag-node__accent {
+  animation: dag-node-breathe 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dag-edge--live {
+    animation: none;
+  }
+  .dag-node:has(.dag-node__dot--pulse) .dag-node__accent {
+    animation: none;
+  }
+}
+
 .dag-legend {
   margin: 0.5rem 0 0;
   font-size: 0.78rem;
@@ -4325,11 +4387,16 @@ button.card-grid__title:hover {
 }
 /* The library's default node fill and viewport mask are a fixed light grey that
  * belongs to neither theme: on the review canvas the map read as three blank
- * placeholder blocks — a loading skeleton, not a map of the workflow. Paint the
- * nodes in the accent that marks a step everywhere else, and dim the off-viewport
- * area with the same scrim the drawers use. */
+ * placeholder blocks — a loading skeleton, not a map of the workflow. Dim the
+ * off-viewport area with the same scrim the drawers use.
+ *
+ * ⚠ DO NOT restore a `fill` here. A CSS declaration outranks the SVG `fill`
+ * ATTRIBUTE that reactflow writes from the `nodeColor` prop, so painting every node
+ * one accent silently discarded the per-state colour the canvas was already
+ * computing — the map showed a single flat colour and read as an empty panel. The
+ * fill now comes from `flow.ts`'s `miniMapColor`, which resolves the same `--t-*`
+ * token this file defines, in whichever theme is active. */
 .dag-minimap .react-flow__minimap-node {
-  fill: var(--accent);
   stroke: var(--border-md);
 }
 .dag-minimap .react-flow__minimap-mask {

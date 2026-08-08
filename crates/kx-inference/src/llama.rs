@@ -43,7 +43,13 @@ pub(crate) const BACKEND_NAME: &str = "kx-llamacpp";
 /// Default context window. Per llama.cpp convention, 0 means "use the
 /// model's own `n_ctx_train`". We pick a conservative cap so v0.1 doesn't
 /// silently allocate huge KV caches.
-pub(crate) const DEFAULT_N_CTX: u32 = 4096;
+///
+/// ⚠ W4: this is an INDEPENDENT copy of the gateway's `DEFAULT_SERVE_N_CTX`, and
+/// the two must move together — a serve that resolves one window while the
+/// in-process backend registers a descriptor declaring another is a configuration
+/// that type-checks and then truncates. `pub` since W4 so the gateway can pin the
+/// pair in a test instead of a comment.
+pub const DEFAULT_N_CTX: u32 = 4096;
 
 /// OSS v0.1 in-process inference backend wrapping `kx-llamacpp`.
 ///

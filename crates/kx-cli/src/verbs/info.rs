@@ -130,10 +130,19 @@ fn print_human(info: &proto::GetServerInfoResponse) {
         on_off(info.feature_vision),
     );
     println!("  audit      {}", on_off(info.audit_log_enabled));
-    println!(
-        "  agentic    max_turns {} · max_tool_calls {} (default; per-run overridable)",
-        info.react_max_turns, info.react_max_tool_calls,
-    );
+    // W4: say what a run GETS and what it may ASK FOR. An old server sends 0 for the
+    // ceiling; print the default alone rather than "up to 0".
+    if info.react_turn_ceiling > info.react_max_turns {
+        println!(
+            "  agentic    max_turns {} (up to {}) · max_tool_calls {} — defaults; per-run overridable",
+            info.react_max_turns, info.react_turn_ceiling, info.react_max_tool_calls,
+        );
+    } else {
+        println!(
+            "  agentic    max_turns {} · max_tool_calls {} (default; per-run overridable)",
+            info.react_max_turns, info.react_max_tool_calls,
+        );
+    }
 }
 
 fn render_json(info: &proto::GetServerInfoResponse) -> String {
@@ -161,6 +170,7 @@ fn render_json(info: &proto::GetServerInfoResponse) -> String {
         "feature_vision": info.feature_vision,
         "audit_log_enabled": info.audit_log_enabled,
         "react_max_turns": info.react_max_turns,
+        "react_turn_ceiling": info.react_turn_ceiling,
         "react_max_tool_calls": info.react_max_tool_calls,
         // Model Control v2 (additive).
         "active_model_id": info.active_model_id,
